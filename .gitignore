@@ -23,8 +23,12 @@ dbt/logs/
 logs/
 *.log
 
-# Secrets - NE JAMAIS COMMITER
-flows/config/pg_config.py
+# Secrets - Configuration locale uniquement (si backup avec credentials)
+flows/config/pg_config_local.py
+flows/config/*_BACKUP.py
+
+# Environment variables
+.env
 
 # IDE
 .vscode/
