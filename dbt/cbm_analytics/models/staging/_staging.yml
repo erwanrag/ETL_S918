@@ -1,0 +1,48 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    description: "Tables brutes importées depuis Progress/Proginov"
+    tables:
+      - name: raw_client
+        description: "Table brute des clients"
+      - name: raw_produit
+        description: "Table brute des produits"
+
+models:
+  - name: stg_client
+    description: "Vue staging des clients nettoyée"
+    columns:
+      - name: code_client
+        description: "Identifiant unique du client"
+        tests:
+          - not_null
+          - unique
+
+      - name: nom_client
+        description: "Nom du client"
+
+      - name: ville
+        description: "Ville du client"
+
+      - name: statut
+        description: "Statut brut du client"
+
+  - name: stg_produit
+    description: "Vue staging des produits nettoyée"
+    columns:
+      - name: code_produit
+        description: "Identifiant unique du produit"
+        tests:
+          - not_null
+          - unique
+
+      - name: nom_produit
+        description: "Nom du produit"
+
+      - name: famille
+        description: "Famille produit"
+
+      - name: statut
+        description: "Statut brut du produit"

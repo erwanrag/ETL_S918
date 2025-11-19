@@ -1,0 +1,33 @@
+version: 2
+
+models:
+
+  - name: ods_client
+    description: "Table ODS des clients enrichie, nettoyée et historisée"
+    columns:
+      - name: code_client
+        description: "Clé primaire du client"
+        tests:
+          - not_null
+          - unique
+
+      - name: segment_activite
+        description: "Segmentation basée sur la date de statut"
+
+      - name: score_capital
+        description: "Score basé sur le capital"
+
+  - name: ods_produit
+    description: "Table ODS des produits enrichie avec indicateurs"
+    columns:
+      - name: code_produit
+        description: "Clé primaire du produit"
+        tests:
+          - not_null
+          - unique
+
+      - name: libelle_statut
+        description: "Statut calculé du produit"
+
+      - name: classe_prix
+        description: "Classification ABC basée sur le prix"
