@@ -2,46 +2,38 @@
     config(
         materialized='table',
         schema='ods',
-        tags=['ods', 'produit']
+        tags=['ods', 'prmultfo']
     )
 }}
 
 /*
 =================================================================
-Modèle : ods_produit
+Modèle : ods_prmultfo
 Description : Modèle ODS auto-généré
-Source : staging.stg_produit
+Source : staging.stg_prmultfo
 Stratégie : TABLE
 =================================================================
 */
 
 
 WITH staging AS (
-    SELECT * FROM {{ ref('stg_produit') }}
+    SELECT * FROM {{ ref('stg_prmultfo') }}
 ),
 
 final AS (
     SELECT
-        cod_cal AS code_cal,
-        cod_cat AS code_cat,
-        cod_cli AS code_cli,
         cod_conv AS code_conv,
-        cod_for AS code_for,
-        cod_nom AS code_nom,
-        cod_nue AS code_nue,
-        cod_par AS code_par,
-        cod_prev AS code_prev,
+        cod_fou AS code_fou,
         cod_pro AS code_pro,
-        cod_prx AS code_prx,
-        dat_crt AS date_crt,
-        dat_ent AS date_ent,
-        dat_fpxr AS date_fpxr,
-        dat_fpxv AS date_fpxv,
+        dat_fpxa AS date_fpxa,
         dat_import AS date_import,
-        dat_mod AS date_mod,
-        dat_remp AS date_remp,
-        dpx_rvt,
-        fpx_mini,
+        dat_prin AS date_prin,
+        fpx_refa,
+        gencod_a,
+        px_max AS prix_max,
+        px_refa AS prix_refa,
+        qte_eco AS quantite_eco,
+        statut,
 
         -- Metadata
         _loaded_at AS source_loaded_at,

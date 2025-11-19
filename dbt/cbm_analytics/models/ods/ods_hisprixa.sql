@@ -2,41 +2,35 @@
     config(
         materialized='table',
         schema='ods',
-        tags=['ods', 'client']
+        tags=['ods', 'hisprixa']
     )
 }}
 
 /*
 =================================================================
-Modèle : ods_client
+Modèle : ods_hisprixa
 Description : Modèle ODS auto-généré
-Source : staging.stg_client
+Source : staging.stg_hisprixa
 Stratégie : TABLE
 =================================================================
 */
 
 
 WITH staging AS (
-    SELECT * FROM {{ ref('stg_client') }}
+    SELECT * FROM {{ ref('stg_hisprixa') }}
 ),
 
 final AS (
     SELECT
-        cod_adh AS code_adh,
-        cod_cli AS code_cli,
-        cod_tlv AS code_tlv,
-        dat_crt AS date_crt,
+        cod_fou AS code_fou,
+        cod_pro AS code_pro,
         dat_mod AS date_mod,
-        dat_sta AS date_sta,
+        dat_px AS date_px,
         depot,
-        gencod_det,
-        mt_franco AS montant_franco,
-        mt_mini AS montant_mini,
-        no_ctrl AS numero_ctrl,
-        no_port AS numero_port,
-        no_tar_loc AS numero_tar_loc,
-        no_tarif AS numero_tarif,
-        statut,
+        px_ach AS prix_ach,
+        px_ach_rq AS prix_ach_rq,
+        px_refa AS prix_refa,
+        qte_rq AS quantite_rq,
 
         -- Metadata
         _loaded_at AS source_loaded_at,

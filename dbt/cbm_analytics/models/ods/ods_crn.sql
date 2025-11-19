@@ -2,41 +2,30 @@
     config(
         materialized='table',
         schema='ods',
-        tags=['ods', 'client']
+        tags=['ods', 'crn']
     )
 }}
 
 /*
 =================================================================
-Modèle : ods_client
+Modèle : ods_crn
 Description : Modèle ODS auto-généré
-Source : staging.stg_client
+Source : staging.stg_crn
 Stratégie : TABLE
 =================================================================
 */
 
 
 WITH staging AS (
-    SELECT * FROM {{ ref('stg_client') }}
+    SELECT * FROM {{ ref('stg_crn') }}
 ),
 
 final AS (
     SELECT
-        cod_adh AS code_adh,
-        cod_cli AS code_cli,
-        cod_tlv AS code_tlv,
+        cod_crn AS code_crn,
         dat_crt AS date_crt,
         dat_mod AS date_mod,
-        dat_sta AS date_sta,
-        depot,
-        gencod_det,
-        mt_franco AS montant_franco,
-        mt_mini AS montant_mini,
-        no_ctrl AS numero_ctrl,
-        no_port AS numero_port,
-        no_tar_loc AS numero_tar_loc,
-        no_tarif AS numero_tarif,
-        statut,
+        no_info AS numero_info,
 
         -- Metadata
         _loaded_at AS source_loaded_at,

@@ -2,46 +2,44 @@
     config(
         materialized='table',
         schema='ods',
-        tags=['ods', 'produit']
+        tags=['ods', 'deppro']
     )
 }}
 
 /*
 =================================================================
-Modèle : ods_produit
+Modèle : ods_deppro
 Description : Modèle ODS auto-généré
-Source : staging.stg_produit
+Source : staging.stg_deppro
 Stratégie : TABLE
 =================================================================
 */
 
 
 WITH staging AS (
-    SELECT * FROM {{ ref('stg_produit') }}
+    SELECT * FROM {{ ref('stg_deppro') }}
 ),
 
 final AS (
     SELECT
-        cod_cal AS code_cal,
-        cod_cat AS code_cat,
-        cod_cli AS code_cli,
-        cod_conv AS code_conv,
-        cod_for AS code_for,
-        cod_nom AS code_nom,
-        cod_nue AS code_nue,
-        cod_par AS code_par,
-        cod_prev AS code_prev,
+        cod_fou AS code_fou,
         cod_pro AS code_pro,
-        cod_prx AS code_prx,
-        dat_crt AS date_crt,
         dat_ent AS date_ent,
-        dat_fpxr AS date_fpxr,
         dat_fpxv AS date_fpxv,
-        dat_import AS date_import,
-        dat_mod AS date_mod,
+        dat_prin AS date_prin,
         dat_remp AS date_remp,
+        depot,
         dpx_rvt,
         fpx_mini,
+        fpx_refv,
+        px_mini AS prix_mini,
+        px_refv AS prix_refv,
+        px_rvt AS prix_rvt,
+        px_sim AS prix_sim,
+        px_std AS prix_std,
+        px_std2 AS prix_std2,
+        px_std3 AS prix_std3,
+        px_ttc AS prix_ttc,
 
         -- Metadata
         _loaded_at AS source_loaded_at,
