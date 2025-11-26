@@ -1,0 +1,51 @@
+# ============================================================================
+# .gitignore pour Projet ETL Prefect + dbt
+# ============================================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# dbt
+dbt/cbm_analytics/target/
+dbt/cbm_analytics/logs/
+dbt/cbm_analytics/dbt_packages/
+dbt/cbm_analytics/profiles.yml
+dbt/logs/
+
+# Logs Prefect
+logs/
+*.log
+
+# Secrets - Configuration locale uniquement (si backup avec credentials)
+flows/config/pg_config_local.py
+flows/config/*_BACKUP.py
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Données temporaires
+*.parquet
+*.csv
+*.json
+!dbt/**/*.json
+!dbt/**/*.yml
+
+# Archives SFTP (trop volumineuses)
+# Ces fichiers sont dans E:\SFTP_Mirroring de toute façon

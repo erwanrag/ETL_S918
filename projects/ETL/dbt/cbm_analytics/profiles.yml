@@ -1,0 +1,32 @@
+# ============================================================================
+# Profiles dbt - Configuration PostgreSQL
+# ============================================================================
+# Fichier : dbt/cbm_analytics/profiles.yml
+# ============================================================================
+
+cbm_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      port: 5432
+      user: postgres
+      password: "Dbyk!vMWZ4z0v*"
+      dbname: etl_db
+      schema: raw
+      threads: 4
+      keepalives_idle: 0
+      connect_timeout: 10
+      search_path: raw,staging,ods,marts,public
+    
+    prod:
+      type: postgres
+      host: localhost
+      port: 5432
+      user: postgres
+      password: "Dbyk!vMWZ4z0v*"
+      dbname: etl_db
+      schema: ods
+      threads: 8
+      search_path: ods,marts,raw,staging,public

@@ -1,0 +1,41 @@
+{{ config(materialized='view') }}
+
+-- Staging model for crn
+
+SELECT
+    "adresse" AS adresse,
+    "adresse4" AS adresse4,
+    "adresse5" AS adresse5,
+    "ca_crn" AS ca_crn,
+    "capital" AS capital,
+    "civilite" AS civilite,
+    "cod_crn" AS cod_crn,
+    "dat_crt" AS dat_crt,
+    "dat_mod" AS dat_mod,
+    "effectif" AS effectif,
+    "famille" AS famille,
+    "flag_repli" AS flag_repli,
+    "form_jur" AS form_jur,
+    "internet" AS internet,
+    "k_post2" AS k_post2,
+    "no_info" AS no_info,
+    "nom_crn" AS nom_crn,
+    "num_fax" AS num_fax,
+    "num_tel" AS num_tel,
+    "part" AS part,
+    "pays" AS pays,
+    "TabPart_crn" AS tabpart_crn,
+    "texte" AS texte,
+    "type" AS type,
+    "usr_crt" AS usr_crt,
+    "usr_mod" AS usr_mod,
+    "ville" AS ville,
+    "zal" AS zal,
+    "zda" AS zda,
+    "zlo" AS zlo,
+    "znu" AS znu,
+    "zta" AS zta,
+    _loaded_at,
+    _source_file,
+    _sftp_log_id
+FROM {{ source('raw', 'raw_crn') }}
