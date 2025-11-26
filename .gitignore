@@ -1,0 +1,70 @@
+# ============================================================================
+# .gitignore pour Projet ETL Prefect (structure complète)
+# ============================================================================
+
+# ---------------------
+# PYTHON
+# ---------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# ---------------------
+# ENVIRONNEMENTS / PACKAGES
+# ---------------------
+venv/
+.env
+.requirements/
+
+# ---------------------
+# PREFECT
+# ---------------------
+.prefect/
+prefect.yaml
+deployments/
+server/
+logs/
+*.log
+
+# ---------------------
+# DBT (si un jour présent)
+# ---------------------
+dbt/**/target/
+dbt/**/logs/
+dbt/**/dbt_packages/
+dbt/**/profiles.yml
+
+# ---------------------
+# DATA TEMPORAIRES
+# ---------------------
+*.parquet
+*.csv
+*.json
+*.tmp
+*.bak
+
+# Garder les fichiers dbt json/yml du repo
+!dbt/**/*.json
+!dbt/**/*.yml
+
+# ---------------------
+# IDE / OS
+# ---------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ---------------------
+# SECRETS LOCAUX
+# ---------------------
+**/*_local.py
+**/*_LOCAL.py
+**/*_BACKUP.py

@@ -1,0 +1,36 @@
+# ================================
+# Requirements pour Prefect + ETL
+# ================================
+
+# Orchestrateur
+prefect>=2.14.0
+
+# PostgreSQL
+psycopg2-binary
+sqlalchemy>=2.0
+
+# DBT (Postgres)
+dbt-core>=1.7
+dbt-postgres>=1.7
+
+# Manipulation fichiers + parquet
+pandas
+pyarrow
+fastparquet
+
+# JSON
+orjson
+
+# Logging structuré
+loguru
+
+# Utils
+python-dotenv
+pathlib
+tqdm
+
+# Pour COPY en CSV tabulé
+pytz
+
+# Pour compatibilité subprocess + routines sys
+typing-extensions
