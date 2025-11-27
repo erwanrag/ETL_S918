@@ -1,0 +1,41 @@
+{{ config(materialized='view') }}
+
+-- Staging model for prprixv
+
+SELECT
+    "cod_cli" AS cod_cli,
+    "cod_pro" AS cod_pro,
+    "cod_rvt_vte" AS cod_rvt_vte,
+    "coef_av" AS coef_av,
+    "coef_rq" AS coef_rq,
+    "coef_t2" AS coef_t2,
+    "coef_t3" AS coef_t3,
+    "coef_t4" AS coef_t4,
+    "coeff" AS coeff,
+    "coeff_pvc" AS coeff_pvc,
+    "cou_fix" AS cou_fix,
+    "dat_fpxv" AS dat_fpxv,
+    "depot" AS depot,
+    "fcoef_rq" AS fcoef_rq,
+    "fcoef_t2" AS fcoef_t2,
+    "fcoef_t3" AS fcoef_t3,
+    "fcoef_t4" AS fcoef_t4,
+    "flag_repli" AS flag_repli,
+    "fpx_mini" AS fpx_mini,
+    "fpx_refv" AS fpx_refv,
+    "fpx_vte" AS fpx_vte,
+    "fqte" AS fqte,
+    "fqte_rq" AS fqte_rq,
+    "no_tarif" AS no_tarif,
+    "pvc" AS pvc,
+    "px_mini" AS px_mini,
+    "px_refv" AS px_refv,
+    "px_vte" AS px_vte,
+    "qte" AS qte,
+    "qte_rq" AS qte_rq,
+    "TabPart_prprixv" AS tabpart_prprixv,
+    "zon_lib" AS zon_lib,
+    _loaded_at,
+    _source_file,
+    _sftp_log_id
+FROM {{ source('ods', 'prprixv') }}

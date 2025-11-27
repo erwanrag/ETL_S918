@@ -326,15 +326,18 @@ def sftp_to_ods_complete_flow():
                     rows_processed=result['rows_loaded'],
                     duration_seconds=raw_duration)
             
-            # 5. STAGING + HASHDIFF
+            # 5. CALCUL HASHDIFF directement dans RAW
             staging_start = datetime.now()
-            staging_result = prepare_staging_complete(table_name, run_id)
+            
+            # Calculer hashdiff dans raw.raw_{table}
+            from utils.hashdiff import execute_hashdiff_update
+            execute_hashdiff_update(f"raw_{table_name.lower()}", 'staging_etl')
+            
             staging_duration = (datetime.now() - staging_start).total_seconds()
             
-            log_step(run_id, log_id, table_name, 'staging', 'success',
-                    rows_processed=staging_result['rows_copied'],
-                    duration_seconds=staging_duration,
-                    step_metadata=staging_result)
+            log_step(run_id, log_id, table_name, 'hashdiff', 'success',
+                    rows_processed=result['rows_loaded'],
+                    duration_seconds=staging_duration)
             
             # 6. MERGE ODS
             ods_start = datetime.now()

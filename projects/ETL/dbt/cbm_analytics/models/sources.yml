@@ -1,33 +1,33 @@
 version: 2
 
 sources:
-  - name: raw
-    description: "Tables RAW chargées depuis SFTP"
+  - name: ods
+    description: "Tables ODS créées par le pipeline Python (UPSERT avec hashdiff)"
     database: etl_db
-    schema: raw
+    schema: ods
     tables:
-      - name: raw_clcondi
-      - name: raw_client
-      - name: raw_crn
-      - name: raw_crnar
-      - name: raw_deppro
-      - name: raw_entetcli
-      - name: raw_entetfou
-      - name: raw_focondi
-      - name: raw_fournis
-      - name: raw_hisprixa
-      - name: raw_hisprixv
-      - name: raw_histoent
-      - name: raw_histolig
-      - name: raw_lignecli
-      - name: raw_lignefou
-      - name: raw_lisval
-      - name: raw_lldespro
-      - name: raw_prmultfo
-      - name: raw_prnomenc
-      - name: raw_produit
-      - name: raw_prprixv
-      - name: raw_soumission
-      - name: raw_stock
-      - name: raw_tabgco
-      - name: raw_typelem
+      - name: clcondi
+      - name: client
+      - name: crn
+      - name: crnar
+      - name: deppro
+      - name: entetcli
+      - name: entetfou
+      - name: focondi
+      - name: fournis
+      - name: hisprixa
+      - name: hisprixv
+      - name: histoent
+      - name: histolig
+      - name: lignecli
+      - name: lignefou
+      - name: lisval
+      - name: lldespro
+      - name: prmultfo
+      - name: prnomenc
+      - name: produit
+      - name: prprixv
+      - name: soumission
+      - name: stock
+      - name: tabgco
+      - name: typelem
