@@ -1,246 +1,237 @@
-"""
-============================================================================
-ODS Tasks - Merge ODS avec UPSERT natif PostgreSQL
-============================================================================
-Fichier : tasks/ods_tasks.py
-
-Tasks pour :
-- Merge STAGING → ODS (UPSERT natif)
-- Support FULL et INCREMENTAL
-- Avec hashdiff pour ne mettre à jour que les changements
-============================================================================
-"""
-
+import psycopg2
 from prefect import task
 from prefect.logging import get_run_logger
-import psycopg2
-from datetime import datetime
-from typing import Dict
 import sys
 
 sys.path.append(r'E:\Prefect\projects\ETL')
 from flows.config.pg_config import config
-from utils.metadata_helper import get_primary_keys, get_business_columns
+from flows.config.table_metadata import (
+    get_primary_keys, 
+    has_primary_key, 
+    should_force_full,
+    get_optimal_load_mode,
+    get_table_description
+)
 
 
 @task(name="💾 Merge ODS (FULL)", retries=1)
-def merge_ods_full(table_name: str, run_id: str) -> Dict:
-    """
-    Mode FULL : TRUNCATE + INSERT
-    
-    Returns:
-        Dict avec rows_inserted
-    """
+def merge_ods_full(table_name: str, run_id: str):
     logger = get_run_logger()
+    logger.info(f"💾 Merge ODS FULL pour {table_name}")
+    
+    src_table = f"staging_etl.stg_{table_name.lower()}"
+    ods_table = f"ods.{table_name.lower()}"
     
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
     
     try:
-        logger.info(f"💾 Merge ODS FULL pour {table_name}")
+        cur.execute(f"SELECT COUNT(*) FROM {src_table}")
+        src_count = cur.fetchone()[0]
+        logger.info(f"📊 Source : {src_count:,} lignes")
         
-        # 1. TRUNCATE ODS
-        logger.info(f"🗑️ TRUNCATE ods.{table_name.lower()}")
-        cur.execute(f"TRUNCATE TABLE ods.{table_name.lower()}")
-        
-        # 2. INSERT FROM STAGING
-        logger.info(f"📥 INSERT depuis staging")
         cur.execute(f"""
-            INSERT INTO ods.{table_name.lower()}
-            SELECT * FROM staging.{table_name.lower()}
-            WHERE _etl_run_id = %s
-        """, (run_id,))
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables 
+                WHERE table_schema = 'ods' 
+                AND table_name = '{table_name.lower()}'
+            )
+        """)
         
-        rows_inserted = cur.rowcount
+        if not cur.fetchone()[0]:
+            logger.info(f"🆕 Création de {ods_table}")
+            cur.execute(f"CREATE TABLE {ods_table} AS SELECT * FROM {src_table} WHERE 1=0")
+            conn.commit()
+        
+        logger.info(f"🧨 TRUNCATE {ods_table}")
+        cur.execute(f"TRUNCATE TABLE {ods_table}")
         conn.commit()
         
-        logger.info(f"✅ {rows_inserted} lignes insérées en mode FULL")
+        cur.execute(f"""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_schema = 'staging_etl' 
+              AND table_name = 'stg_{table_name.lower()}'
+              AND column_name NOT IN ('_etl_run_id')
+            ORDER BY ordinal_position
+        """)
+        
+        columns = [row[0] for row in cur.fetchall()]
+        columns_str = ', '.join([f'"{col}"' for col in columns])
+        
+        cur.execute(f"INSERT INTO {ods_table} ({columns_str}) SELECT {columns_str} FROM {src_table}")
+        conn.commit()
+        
+        cur.execute(f"SELECT COUNT(*) FROM {ods_table}")
+        inserted_count = cur.fetchone()[0]
+        
+        logger.info(f"✅ {inserted_count:,} lignes insérées")
         
         return {
-            'rows_inserted': rows_inserted,
-            'rows_updated': 0,
-            'load_mode': 'FULL',
-            'table_name': table_name,
+            'rows_inserted': inserted_count,
+            'mode': 'FULL',
+            'table': ods_table,
             'run_id': run_id
         }
         
     except Exception as e:
+        logger.error(f"❌ Erreur : {e}")
         conn.rollback()
-        logger.error(f"❌ Erreur merge FULL : {e}")
         raise
-        
     finally:
         cur.close()
         conn.close()
 
 
 @task(name="💾 Merge ODS (INCREMENTAL)", retries=1)
-def merge_ods_incremental(table_name: str, run_id: str) -> Dict:
-    """
-    Mode INCREMENTAL : INSERT ON CONFLICT UPDATE avec hashdiff
-    
-    Returns:
-        Dict avec rows_inserted et rows_updated
-    """
+def merge_ods_incremental(table_name: str, run_id: str):
     logger = get_run_logger()
+    logger.info(f"💾 Merge ODS INCREMENTAL pour {table_name}")
+    
+    pk_columns = get_primary_keys(table_name)
+    
+    if not pk_columns:
+        raise ValueError(f"Aucune PK pour {table_name}")
+    
+    logger.info(f"🔑 PK : {', '.join(pk_columns)}")
+    
+    src_table = f"staging_etl.stg_{table_name.lower()}"
+    ods_table = f"ods.{table_name.lower()}"
     
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
     
     try:
-        logger.info(f"💾 Merge ODS INCREMENTAL pour {table_name}")
+        cur.execute(f"""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables 
+                WHERE table_schema = 'ods' 
+                AND table_name = '{table_name.lower()}'
+            )
+        """)
         
-        # 1. Récupérer PK et colonnes métier
-        pk_cols = get_primary_keys(table_name)
-        business_cols = get_business_columns(table_name)
+        if not cur.fetchone()[0]:
+            logger.info(f"🆕 Création de {ods_table}")
+            cur.execute(f"CREATE TABLE {ods_table} AS SELECT * FROM {src_table} WHERE 1=0")
+            conn.commit()
         
-        if not pk_cols:
-            raise ValueError(f"Aucune PK définie pour {table_name}")
+        cur.execute(f"""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_schema = 'staging_etl' 
+              AND table_name = 'stg_{table_name.lower()}'
+              AND column_name NOT IN ('_etl_run_id')
+            ORDER BY ordinal_position
+        """)
         
-        # 2. Construire requête UPSERT
-        pk_constraint = ', '.join([f'"{pk}"' for pk in pk_cols])
+        columns = [row[0] for row in cur.fetchall()]
+        columns_str = ', '.join([f'"{col}"' for col in columns])
         
-        # Colonnes à mettre à jour (hors PK et colonnes techniques)
-        update_cols = [col for col in business_cols if col not in pk_cols]
+        pk_join = ' AND '.join([f'target."{pk}" = source."{pk}"' for pk in pk_columns])
         
-        update_set = []
-        for col in update_cols:
-            update_set.append(f'"{col}" = EXCLUDED."{col}"')
+        # ✅ CORRECTION : Exclure AUSSI _etl_valid_from du set_clause
+        update_cols = [
+            col for col in columns 
+            if col not in pk_columns 
+            and col not in ['_etl_hashdiff', '_etl_valid_from']
+        ]
+        set_clause = ', '.join([f'"{col}" = source."{col}"' for col in update_cols])
         
-        # Colonnes techniques à toujours mettre à jour
-        update_set.extend([
-            '_etl_updated_at = CURRENT_TIMESTAMP',
-            '_etl_run_id = EXCLUDED._etl_run_id',
-            '_etl_hashdiff = EXCLUDED._etl_hashdiff'
-        ])
-        
-        update_set_str = ',\n        '.join(update_set)
-        
-        # 3. UPSERT avec condition hashdiff
-        sql = f"""
-            INSERT INTO ods.{table_name.lower()}
-            SELECT * FROM staging.{table_name.lower()}
-            WHERE _etl_run_id = %s
-            
-            ON CONFLICT ({pk_constraint})
-            DO UPDATE SET
-                {update_set_str}
-            WHERE ods.{table_name.lower()}._etl_hashdiff IS DISTINCT FROM EXCLUDED._etl_hashdiff
-        """
-        
-        logger.info(f"📥 UPSERT depuis staging avec hashdiff filter")
-        
-        cur.execute(sql, (run_id,))
-        rows_affected = cur.rowcount
+        logger.info("🔄 INSERT nouveaux")
+        cur.execute(f"""
+            INSERT INTO {ods_table} ({columns_str})
+            SELECT {columns_str} FROM {src_table} AS source
+            WHERE NOT EXISTS (
+                SELECT 1 FROM {ods_table} AS target
+                WHERE {pk_join}
+            )
+        """)
+        inserted_count = cur.rowcount
         conn.commit()
+        logger.info(f"➕ {inserted_count:,} lignes insérées")
         
-        # 4. Compter INSERT vs UPDATE (approximatif)
-        # En pratique, on détecte ça depuis staging_tasks.detect_changes
-        logger.info(f"✅ {rows_affected} lignes affectées (INSERT + UPDATE)")
+        if '_etl_hashdiff' in columns:
+            # Ajouter _etl_hashdiff et _etl_valid_from explicitement APRÈS le set_clause
+            if set_clause:  # S'il y a d'autres colonnes à updater
+                full_set = f'{set_clause}, "_etl_hashdiff" = source."_etl_hashdiff", "_etl_valid_from" = source."_etl_valid_from"'
+            else:  # Sinon juste hashdiff et valid_from
+                full_set = '"_etl_hashdiff" = source."_etl_hashdiff", "_etl_valid_from" = source."_etl_valid_from"'
+            
+            cur.execute(f"""
+                UPDATE {ods_table} AS target
+                SET {full_set}
+                FROM {src_table} AS source
+                WHERE {pk_join}
+                  AND target."_etl_hashdiff" != source."_etl_hashdiff"
+            """)
+            updated_count = cur.rowcount
+            conn.commit()
+            logger.info(f"🔄 {updated_count:,} lignes mises à jour")
+        else:
+            updated_count = 0
+        
+        total = inserted_count + updated_count
+        logger.info(f"✅ {total:,} lignes affectées")
         
         return {
-            'rows_affected': rows_affected,
-            'load_mode': 'INCREMENTAL',
-            'table_name': table_name,
+            'rows_inserted': inserted_count,
+            'rows_updated': updated_count,
+            'rows_affected': total,
+            'mode': 'INCREMENTAL',
+            'table': ods_table,
             'run_id': run_id
         }
         
     except Exception as e:
+        logger.error(f"❌ Erreur : {e}")
         conn.rollback()
-        logger.error(f"❌ Erreur merge INCREMENTAL : {e}")
         raise
-        
     finally:
         cur.close()
         conn.close()
 
-
-@task(name="💾 Merge ODS auto (FULL/INCREMENTAL)")
-def merge_ods_auto(table_name: str, run_id: str, load_mode: str) -> Dict:
-    """
-    Merge ODS avec mode automatique
-    
-    Args:
-        table_name: Nom table
-        run_id: UUID run
-        load_mode: 'FULL' ou 'INCREMENTAL'
-    
-    Returns:
-        Dict avec résultats merge
-    """
+@task(name="💾 Merge ODS auto")
+def merge_ods_auto(table_name: str, run_id: str, load_mode: str = "AUTO"):
     logger = get_run_logger()
     
-    start_time = datetime.now()
+    desc = get_table_description(table_name)
+    if desc:
+        logger.info(f"📋 {desc}")
     
-    logger.info(f"💾 Merge ODS {load_mode} pour {table_name}")
+    if load_mode == "AUTO":
+        load_mode = get_optimal_load_mode(table_name)
+        
+        if should_force_full(table_name):
+            logger.info("🤖 AUTO → FULL")
+        elif has_primary_key(table_name):
+            pks = get_primary_keys(table_name)
+            logger.info(f"🤖 AUTO → INCREMENTAL (PK: {', '.join(pks)})")
     
-    if load_mode.upper() == 'FULL':
-        result = merge_ods_full(table_name, run_id)
-    elif load_mode.upper() == 'INCREMENTAL':
-        result = merge_ods_incremental(table_name, run_id)
+    logger.info(f"💾 Mode {load_mode}")
+    
+    if load_mode == "FULL":
+        return merge_ods_full(table_name, run_id)
+    elif load_mode == "INCREMENTAL":
+        return merge_ods_incremental(table_name, run_id)
     else:
-        raise ValueError(f"Load mode invalide : {load_mode}")
-    
-    duration = (datetime.now() - start_time).total_seconds()
-    result['duration_seconds'] = duration
-    
-    logger.info(f"✅ Merge ODS terminé en {duration:.2f}s")
-    
-    return result
+        raise ValueError(f"Mode invalide : {load_mode}")
 
 
-@task(name="📊 Vérifier ODS après merge")
-def verify_ods_after_merge(table_name: str, run_id: str) -> Dict:
-    """
-    Vérifier l'état ODS après merge
-    
-    Returns:
-        Dict avec stats ODS
-    """
+@task(name="✅ Vérifier ODS")
+def verify_ods_after_merge(table_name: str, run_id: str):
     logger = get_run_logger()
+    
+    ods_table = f"ods.{table_name.lower()}"
     
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
     
     try:
-        # 1. Count total lignes ODS
-        cur.execute(f"SELECT COUNT(*) FROM ods.{table_name.lower()}")
-        total_rows = cur.fetchone()[0]
+        cur.execute(f"SELECT COUNT(*) FROM {ods_table}")
+        total = cur.fetchone()[0]
         
-        # 2. Count lignes de ce run
-        cur.execute(f"""
-            SELECT COUNT(*) 
-            FROM ods.{table_name.lower()}
-            WHERE _etl_run_id = %s
-        """, (run_id,))
-        run_rows = cur.fetchone()[0]
+        logger.info(f"✅ ODS : {total:,} lignes")
         
-        # 3. Dernière mise à jour
-        cur.execute(f"""
-            SELECT MAX(_etl_updated_at)
-            FROM ods.{table_name.lower()}
-        """)
-        last_updated = cur.fetchone()[0]
-        
-        logger.info(f"📊 ODS {table_name} : {total_rows} lignes totales, {run_rows} de ce run")
-        
-        return {
-            'table_name': table_name,
-            'run_id': run_id,
-            'total_rows_ods': total_rows,
-            'run_rows': run_rows,
-            'last_updated': last_updated
-        }
+        return {'exists': True, 'total_rows': total}
         
     finally:
         cur.close()
         conn.close()
-
-
-# ============================================================================
-# TEST
-# ============================================================================
-
-if __name__ == "__main__":
-    print("Test ODS tasks...")
-    # Test nécessite données en STAGING

@@ -1,18 +1,17 @@
 """
 ============================================================================
-Flow Prefect : Ingestion SFTP → PostgreSQL (RAW → STAGING → ODS)
+Flow Prefect : Ingestion SFTP → PostgreSQL (RAW → ODS)
 ============================================================================
-Version enrichie avec :
-- Validation enrichie (schéma, row count, PK)
-- Staging + hashdiff
-- Merge ODS (FULL/INCREMENTAL)
+Version PRODUCTION avec :
+- Validation enrichie
+- Calcul hashdiff dans RAW
+- Merge ODS
+- Archivage + Nettoyage SFTP
 ============================================================================
 """
 
 import os
-import shutil
 import json
-import time
 from pathlib import Path
 from datetime import datetime
 from io import StringIO
@@ -26,37 +25,15 @@ import sys
 
 sys.path.append(r'E:\Prefect\projects\ETL')
 from flows.config.pg_config import config
+from flows.utils.file_operations import archive_and_cleanup
 
-# Import des nouvelles tasks
+# Import des tasks métier
 from tasks.validation_tasks import validate_file_complete
-from tasks.staging_tasks import prepare_staging_complete
 from tasks.ods_tasks import merge_ods_auto, verify_ods_after_merge
 
 
-def safe_move(src: str, dst: str, retries: int = 30, delay: float = 1.0):
-    """Move ultra-robuste Windows/SFTP avec fallback COPY+DELETE"""
-    for i in range(retries):
-        try:
-            shutil.move(src, dst)
-            return True
-        except PermissionError:
-            if i == retries - 1:
-                # Fallback: COPY puis DELETE
-                try:
-                    shutil.copy2(src, dst)
-                    time.sleep(2)
-                    os.remove(src)
-                    return True
-                except:
-                    return False
-            time.sleep(delay)
-        except FileNotFoundError:
-            return False
-    return False
-
-
 # ============================================================================
-# TASKS EXISTANTES (inchangées)
+# TASKS INGESTION
 # ============================================================================
 
 @task(name="📂 Scanner répertoire SFTP", retries=2)
@@ -138,11 +115,10 @@ def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
 
 @task(name="📥 Charger fichier dans RAW (DROP + CREATE + COPY)", retries=1)
 def load_file_to_raw_optimized(file_path: str, log_id: int, metadata: dict):
-
     logger = get_run_logger()
     file_name = os.path.basename(file_path)
 
-    # ✅ Sécurisation si metadata est None
+    # Déterminer nom de table
     if metadata and "table_name" in metadata:
         table_short = metadata["table_name"].lower()
     else:
@@ -151,7 +127,7 @@ def load_file_to_raw_optimized(file_path: str, log_id: int, metadata: dict):
     table_name = f"raw_{table_short}"
     full_table = f"{config.schema_raw}.{table_name}"
 
-    # Lire le parquet
+    # Lire parquet + colonnes ETL
     df = pd.read_parquet(file_path)
     df["_loaded_at"] = datetime.now()
     df["_source_file"] = file_name
@@ -160,13 +136,12 @@ def load_file_to_raw_optimized(file_path: str, log_id: int, metadata: dict):
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
 
-    # 🔥 AUTO-DROP TABLE RAW (toujours propre et à jour)
+    # DROP + CREATE
     logger.info(f"🧨 DROP TABLE si existe : {full_table}")
     cur.execute(f'DROP TABLE IF EXISTS {full_table} CASCADE;')
     conn.commit()
 
-    # 🔧 Création via pandas
-    logger.info(f"🛠️ CREATE TABLE {full_table} via pandas.to_sql()")
+    logger.info(f"🛠️ CREATE TABLE {full_table}")
     engine = create_engine(config.get_sqlalchemy_url(config.schema_raw))
     df.head(0).to_sql(
         name=table_name,
@@ -176,7 +151,7 @@ def load_file_to_raw_optimized(file_path: str, log_id: int, metadata: dict):
         index=False
     )
 
-    # 🚀 COPY data
+    # COPY données
     logger.info("🚀 COPY PostgreSQL…")
     output = StringIO()
     df.to_csv(output, sep="\t", header=False, index=False, na_rep="\\N")
@@ -226,47 +201,55 @@ def log_step(run_id: str, file_log_id: int, table_name: str, step_name: str,
         conn.close()
 
 
-@task(name="📦 Archiver fichiers SFTP")
+@task(name="📦 Archiver + Nettoyer SFTP")
 def archive_files(parquet_path: str):
-    logger = get_run_logger()
-    today = datetime.now().strftime("%Y-%m-%d")
-    archive_dir = Path(config.sftp_processed_dir) / today / "data"
-    archive_dir.mkdir(parents=True, exist_ok=True)
-
-    base = Path(parquet_path).stem
-
-    files = [
-        (parquet_path, archive_dir / f"{base}.parquet"),
-        (Path(config.sftp_metadata_dir) / f"{base}_metadata.json",
-         archive_dir / f"{base}_metadata.json"),
-        (Path(config.sftp_status_dir) / f"{base}_status.json",
-         archive_dir / f"{base}_status.json")
-    ]
-
-    for src, dst in files:
-        src = Path(src)
-        if src.exists():
-            ok = safe_move(str(src), str(dst))
-            if ok:
-                logger.info(f"📦 Archivé : {dst.name}")
-            else:
-                logger.warning(f"⚠️ Impossible d'archiver (fichier verrouillé) : {src}")
-
-
-# ============================================================================
-# FLOW PRINCIPAL ENRICHI
-# ============================================================================
-
-@flow(name="🔄 Pipeline Complet : SFTP → RAW → STAGING → ODS")
-def sftp_to_ods_complete_flow():
     """
-    Pipeline complet avec toutes les étapes :
+    Archivage complet :
+    1. MOVE E:\SFTP_Mirroring\Incoming → Processed
+    2. DELETE C:\ProgramData\ssh\SFTPRoot\Incoming
+    """
+    logger = get_run_logger()
+    base = Path(parquet_path).stem
+    
+    # Construire chemins Incoming
+    incoming_paths = {
+        'parquet': Path(parquet_path),
+        'metadata': Path(config.sftp_metadata_dir) / f"{base}_metadata.json",
+        'status': Path(config.sftp_status_dir) / f"{base}_status.json"
+    }
+    
+    # Construire chemins serveur SFTP
+    sftp_root = Path(r"C:\ProgramData\ssh\SFTPRoot\Incoming\data")
+    sftp_server_paths = {
+        'parquet': sftp_root / "parquet" / f"{base}.parquet",
+        'metadata': sftp_root / "metadata" / f"{base}_metadata.json",
+        'status': sftp_root / "status" / f"{base}_status.json"
+    }
+    
+    # Appel fonction mutualisée
+    archive_and_cleanup(
+        base_filename=base,
+        archive_root=config.sftp_processed_dir,
+        incoming_paths=incoming_paths,
+        sftp_server_paths=sftp_server_paths,
+        logger=logger
+    )
+
+
+# ============================================================================
+# FLOW PRINCIPAL
+# ============================================================================
+
+@flow(name="🔄 Pipeline Complet : SFTP → RAW → ODS")
+def sftp_to_ods_flow():
+    """
+    Pipeline PRODUCTION complet :
     1. Scan SFTP
-    2. Validation enrichie
+    2. Validation
     3. Load RAW
-    4. Staging + hashdiff
+    4. Hashdiff dans RAW
     5. Merge ODS
-    6. Archivage
+    6. Archivage + Nettoyage
     """
     logger = get_run_logger()
 
@@ -300,7 +283,7 @@ def sftp_to_ods_complete_flow():
             # 2. Logger fichier
             log_id = log_file_to_monitoring(f, meta, status)
             
-            # 3. VALIDATION ENRICHIE
+            # 3. VALIDATION
             base = Path(f).stem
             meta_path = Path(config.sftp_metadata_dir) / f"{base}_metadata.json"
             
@@ -326,12 +309,11 @@ def sftp_to_ods_complete_flow():
                     rows_processed=result['rows_loaded'],
                     duration_seconds=raw_duration)
             
-            # 5. CALCUL HASHDIFF directement dans RAW
+            # 5. CALCUL HASHDIFF dans RAW
             staging_start = datetime.now()
             
-            # Calculer hashdiff dans raw.raw_{table}
             from utils.hashdiff import execute_hashdiff_update
-            execute_hashdiff_update(f"raw_{table_name.lower()}", 'staging_etl')
+            execute_hashdiff_update(table_name.lower(), 'raw')  # ✅ CORRIGÉ
             
             staging_duration = (datetime.now() - staging_start).total_seconds()
             
@@ -352,7 +334,7 @@ def sftp_to_ods_complete_flow():
             # 7. Vérification ODS
             verify_ods_after_merge(table_name, run_id)
             
-            # 8. Archivage
+            # 8. Archivage + Nettoyage
             archive_files(f)
             
             # Stats
@@ -365,7 +347,6 @@ def sftp_to_ods_complete_flow():
         except Exception as e:
             logger.error(f"❌ Erreur fichier : {f} — {e}")
             
-            # Logger l'erreur
             if 'log_id' in locals() and 'table_name' in locals():
                 log_step(run_id, log_id, table_name, 'error', 'failed',
                         error_message=str(e))
@@ -373,43 +354,5 @@ def sftp_to_ods_complete_flow():
     logger.info(f"🎯 PIPELINE TERMINÉ : {total_tables} table(s), {total_rows:,} lignes")
 
 
-@flow(name="🔄 Ingestion SFTP → PostgreSQL RAW (SIMPLE)")
-def sftp_to_raw_flow():
-    """Flow simple : juste RAW (version originale)"""
-    logger = get_run_logger()
-
-    files = scan_sftp_directory()
-
-    if not files:
-        logger.info("ℹ️ Aucun fichier parquet.")
-        return
-
-    total = 0
-    for f in files:
-        try:
-            meta = read_metadata_json(f)
-            status = read_status_json(f)
-            log_id = log_file_to_monitoring(f, meta, status)
-            result = load_file_to_raw_optimized(f, log_id, meta)
-            total += result["rows_loaded"]
-            archive_files(f)
-        except Exception as e:
-            logger.error(f"❌ Erreur fichier : {f} — {e}")
-
-    logger.info(f"🎯 TOTAL : {total:,} lignes chargées")
-
-
-# ============================================================================
-# EXÉCUTION
-# ============================================================================
-
 if __name__ == "__main__":
-    # Choisir le flow à exécuter
-    import sys
-    
-    if len(sys.argv) > 1 and sys.argv[1] == '--complete':
-        # Pipeline complet (avec validation, staging, ODS)
-        sftp_to_ods_complete_flow()
-    else:
-        # Pipeline simple (juste RAW)
-        sftp_to_raw_flow()
+    sftp_to_ods_flow()
