@@ -24,7 +24,7 @@ import sys
 
 sys.path.append(r'E:\Prefect\projects\ETL')
 from flows.config.pg_config import config
-from flows.utils.file_operations import archive_and_cleanup
+from utils.file_operations import archive_and_cleanup
 
 
 @task(name="📂 Scanner SFTP parquet")
@@ -68,30 +68,68 @@ def read_status_json(parquet_path: str):
 
 @task(name="📝 Logger dans sftp_monitoring")
 def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
+    """
+    Logger fichier SFTP dans sftp_monitoring.sftp_file_log
+    
+    La fonction PostgreSQL log_new_file() extrait automatiquement :
+    - load_mode (depuis status ou metadata)
+    - table_name (depuis status ou metadata)
+    - row_count (depuis status ou metadata)
+    - run_id (depuis status ou metadata)
+    
+    Args:
+        file_path: Chemin complet du fichier .parquet
+        metadata: Contenu du fichier *_metadata.json
+        status: Contenu du fichier *_status.json
+    
+    Returns:
+        int: log_id créé dans sftp_file_log
+    """
     logger = get_run_logger()
     file_name = os.path.basename(file_path)
     file_size = os.path.getsize(file_path)
 
+    # ✅ AMÉLIORATION : Structure metadata_json claire
     full_meta = {
         "file_extension": ".parquet",
         "detected_timestamp": datetime.now().isoformat(),
-        "metadata": metadata or {},
-        "status": status or {}
+        "phase1_metadata": metadata or {},  # Contenu metadata.json
+        "phase1_status": status or {}       # Contenu status.json
     }
+
+    # Log le load_mode détecté pour debug
+    load_mode = None
+    if status:
+        load_mode = status.get('load_mode', 'UNKNOWN')
+    elif metadata:
+        load_mode = metadata.get('load_mode', 'UNKNOWN')
+    
+    logger.info(f"📋 {file_name} - load_mode: {load_mode}")
 
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
-    cur.execute("""
-        SELECT sftp_monitoring.log_new_file(%s, %s, %s, %s, %s)
-    """, (file_name, file_path, file_size, "CBM", Json(full_meta)))
+    
+    try:
+        # Appel fonction PostgreSQL (extraction automatique)
+        cur.execute("""
+            SELECT sftp_monitoring.log_new_file(%s, %s, %s, %s, %s)
+        """, (file_name, file_path, file_size, "CBM", Json(full_meta)))
 
-    log_id = cur.fetchone()[0]
-    conn.commit()
-    cur.close()
-    conn.close()
+        log_id = cur.fetchone()[0]
+        conn.commit()
+        
+        logger.info(f"📝 Log ID {log_id} créé")
+        
+        return log_id
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur log_file_to_monitoring : {e}")
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
 
-    logger.info(f"📝 Log ID {log_id}")
-    return log_id
 
 
 @task(name="📥 Charger dans RAW (DROP + CREATE + COPY)")

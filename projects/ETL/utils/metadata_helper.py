@@ -8,11 +8,13 @@ Fonctions pour récupérer métadonnées depuis PostgreSQL :
 - Structure colonnes (ProginovColumns)
 - Primary keys (ProginovIndexes)
 - Configuration tables (etl_tables)
+- Mapping Progress → PostgreSQL
+- Gestion colonnes EXTENT
 ============================================================================
 """
 
 import psycopg2
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any, Tuple
 import sys
 from pathlib import Path
 
@@ -26,12 +28,16 @@ def get_connection():
     return psycopg2.connect(config.get_connection_string())
 
 
-def get_table_columns(table_name: str) -> List[Dict[str, any]]:
+# ============================================================================
+# Colonnes de base (version liste simple)
+# ============================================================================
+
+def get_table_columns(table_name: str) -> List[Dict[str, Any]]:
     """
     Récupérer structure colonnes depuis metadata.ProginovColumns
     
     Returns:
-        List[Dict] avec keys: column_name, data_type, is_mandatory
+        List[Dict] avec keys: column_name, data_type, is_mandatory, width, scale
     """
     conn = get_connection()
     cur = conn.cursor()
@@ -66,6 +72,76 @@ def get_table_columns(table_name: str) -> List[Dict[str, any]]:
         conn.close()
 
 
+# ============================================================================
+# Colonnes enrichies (dict colonne → metadata complète)
+# ============================================================================
+
+def get_columns_metadata(table_name: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Récupérer TOUTES les métadonnées colonnes pour une table depuis metadata.proginovcolumns.
+    
+    Retourne un dict :
+    {
+        "nom_cli": {
+            "ColumnName": "nom_cli",
+            "DataType": "varchar",
+            "ProgressType": "character",
+            "Width": 31000,
+            "Scale": 0,
+            "IsMandatory": False,
+            "Extent": 0,
+            "ProgressOrder": 30
+        },
+        ...
+    }
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    # Progress stocke souvent les noms en majuscules
+    clean_table = table_name.split("_", 1)[-1]
+    
+    try:
+        cur.execute("""
+            SELECT 
+                "ColumnName",
+                "DataType",
+                "ProgressType",
+                "Width",
+                "Scale",
+                "IsMandatory",
+                "Extent",
+                "ProgressOrder"
+            FROM metadata.proginovcolumns
+            WHERE UPPER("TableName") = UPPER(%s)
+            ORDER BY "ProgressOrder"
+        """, (clean_table,))
+        
+        meta: Dict[str, Dict[str, Any]] = {}
+        for row in cur.fetchall():
+            col_name = row[0]
+            meta[col_name] = {
+                "ColumnName": row[0],
+                "DataType": row[1],
+                "ProgressType": row[2],
+                "Width": row[3],
+                "Scale": row[4],
+                "IsMandatory": row[5],
+                "Extent": row[6],
+                "ProgressOrder": row[7],
+            }
+        
+        return meta
+        
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ============================================================================
+# Primary keys
+# ============================================================================
+
 def get_primary_keys(table_name: str) -> List[str]:
     """
     Récupérer primary keys depuis metadata.ProginovIndexes
@@ -92,7 +168,11 @@ def get_primary_keys(table_name: str) -> List[str]:
         conn.close()
 
 
-def get_table_config(table_name: str) -> Optional[Dict[str, any]]:
+# ============================================================================
+# Config table ETL
+# ============================================================================
+
+def get_table_config(table_name: str) -> Optional[Dict[str, Any]]:
     """
     Récupérer config table depuis metadata.etl_tables
     
@@ -153,6 +233,10 @@ def get_all_active_tables() -> List[str]:
         conn.close()
 
 
+# ============================================================================
+# Mapping Progress → PostgreSQL (existant conservé)
+# ============================================================================
+
 def map_progress_to_postgres(progress_type: str, width: Optional[int] = None, scale: Optional[int] = None) -> str:
     """
     Mapper type Progress → PostgreSQL
@@ -190,7 +274,15 @@ def map_progress_to_postgres(progress_type: str, width: Optional[int] = None, sc
     return pg_type
 
 
+# ============================================================================
+# Colonnes métier (existant, utilisé par hashdiff)
+# ============================================================================
+
 def get_business_columns(table_name: str) -> List[str]:
+    """
+    Retourne les colonnes métier (hors colonnes ETL) pour une table.
+    Gère les préfixes raw_/staging_/stg_.
+    """
 
     # auto-remove prefix raw_ ou stg_ si présent
     if table_name.lower().startswith(("raw_", "staging_", "stg_")):
@@ -206,6 +298,7 @@ def get_business_columns(table_name: str) -> List[str]:
         for col in columns
         if not col['column_name'].startswith('_etl_')
     ]
+
 
 def normalize_column_name(col_name: str) -> str:
     """
@@ -231,6 +324,119 @@ def normalize_column_name(col_name: str) -> str:
 
 
 # ============================================================================
+# EXTENT (reprend ton module dédié et le centralise ici)
+# ============================================================================
+
+def get_extent_columns_for_table(table_name: str) -> Dict[str, int]:
+    """
+    Récupérer colonnes avec extent > 0
+    
+    IMPORTANT : Progress stocke les noms en MAJUSCULES
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute("""
+            SELECT "ColumnName", "Extent"
+            FROM metadata.proginovcolumns
+            WHERE UPPER("TableName") = UPPER(%s)
+              AND "Extent" > 0
+            ORDER BY "ColumnName"
+        """, (table_name,))
+        
+        return {row[0]: row[1] for row in cur.fetchall()}
+    finally:
+        cur.close()
+        conn.close()
+
+
+def generate_extent_columns(column_name: str, extent: int) -> List[str]:
+    """Générer liste colonnes éclatées"""
+    return [f"{column_name}_{i+1}" for i in range(extent)]
+
+
+def get_extent_mapping(table_name: str) -> Dict[str, List[str]]:
+    """Obtenir mapping extent → colonnes éclatées"""
+    extent_cols = get_extent_columns_for_table(table_name)
+    
+    mapping: Dict[str, List[str]] = {}
+    for col_name, extent in extent_cols.items():
+        mapping[col_name] = generate_extent_columns(col_name, extent)
+    
+    return mapping
+
+
+def build_ods_select_with_extent(
+    table_name: str,
+    staging_columns: List[str]
+) -> Tuple[str, List[str]]:
+    """
+    Construire SELECT pour ODS avec éclatement extent
+    
+    SÉPARATEUR : Point-virgule (;)
+    
+    Exemple données Progress : zal = "AAA;;;;"
+    Résultat :
+        zal_1 = "AAA"
+        zal_2 = ""
+        zal_3 = ""
+        zal_4 = ""
+        zal_5 = ""
+    """
+    extent_cols = get_extent_columns_for_table(table_name)
+    
+    select_parts: List[str] = []
+    ods_columns: List[str] = []
+    
+    for col in staging_columns:
+        # Si colonne extent, l'éclater
+        if col in extent_cols:
+            extent = extent_cols[col]
+            for i in range(1, extent + 1):
+                expanded_col = f"{col}_{i}"
+                # ✅ SÉPARATEUR : Point-virgule (;)
+                select_parts.append(
+                    f"split_part(\"{col}\", ';', {i}) AS {expanded_col}"
+                )
+                ods_columns.append(expanded_col)
+        else:
+            # Colonne normale (y compris _etl_*)
+            select_parts.append(f'"{col}"')
+            ods_columns.append(col)
+    
+    select_clause = ',\n            '.join(select_parts)
+    
+    return select_clause, ods_columns
+
+
+def has_extent_columns(table_name: str) -> bool:
+    """Vérifier si table a colonnes extent"""
+    extent_cols = get_extent_columns_for_table(table_name)
+    return len(extent_cols) > 0
+
+
+def count_extent_expansion(table_name: str) -> Dict[str, float]:
+    """Calculer statistiques expansion"""
+    extent_cols = get_extent_columns_for_table(table_name)
+    
+    if not extent_cols:
+        return {
+            'extent_columns': 0,
+            'total_expanded': 0,
+            'expansion_ratio': 0
+        }
+    
+    total_expanded = sum(extent_cols.values())
+    
+    return {
+        'extent_columns': len(extent_cols),
+        'total_expanded': total_expanded,
+        'expansion_ratio': total_expanded / len(extent_cols)
+    }
+
+
+# ============================================================================
 # TESTS
 # ============================================================================
 
@@ -240,7 +446,7 @@ if __name__ == "__main__":
     print("TEST METADATA HELPER")
     print("=" * 60)
     
-    # Test 1: Liste tables actives
+    # Test 1: Tables actives
     print("\n1. Tables actives:")
     tables = get_all_active_tables()
     print(f"   {len(tables)} table(s): {', '.join(tables[:5])}...")
@@ -259,12 +465,12 @@ if __name__ == "__main__":
             )
             print(f"   - {col['column_name']}: {col['data_type']} → {pg_type}")
     
-    # Test 3: Primary keys
+        # Test 3: Primary keys
         print(f"\n3. Primary keys de {test_table}:")
         pks = get_primary_keys(test_table)
         print(f"   {pks}")
     
-    # Test 4: Config table
+        # Test 4: Config table
         print(f"\n4. Config de {test_table}:")
         config_table = get_table_config(test_table)
         if config_table:

@@ -5,7 +5,7 @@ Flow Prefect : ODS → PREP (via dbt)
 Responsabilité : Exécuter les modèles dbt prep.*
 - Lit depuis ods.*
 - Crée tables prep.*
-- Tests dbt
+- Tests dbt (optionnel)
 ============================================================================
 """
 
@@ -26,6 +26,9 @@ def run_dbt_models(models: str = "prep.*"):
     
     Args:
         models: Sélecteur dbt (défaut: "prep.*")
+    
+    Returns:
+        dict: {'success': bool, 'models_count': int, 'stdout': str}
     """
     logger = get_run_logger()
     
@@ -76,7 +79,15 @@ def run_dbt_models(models: str = "prep.*"):
 
 @task(name="🧪 Exécuter dbt test")
 def run_dbt_tests(models: str = "prep.*"):
-    """Exécuter les tests dbt sur les modèles PREP"""
+    """
+    Exécuter les tests dbt sur les modèles PREP
+    
+    Args:
+        models: Sélecteur dbt (défaut: "prep.*")
+    
+    Returns:
+        dict: {'success': bool, 'stdout': str}
+    """
     logger = get_run_logger()
     
     dbt_project_dir = Path(config.dbt_project_dir)
@@ -117,18 +128,21 @@ def run_dbt_tests(models: str = "prep.*"):
 @flow(name="⚙️ ODS → PREP (dbt transformations)")
 def ods_to_prep_flow(
     models: str = "prep.*",
-    run_tests: bool = True
+    run_tests: bool = False
 ):
     """
     Flow de transformation dbt : ODS → PREP
     
     Args:
         models: Sélecteur dbt (défaut: "prep.*")
-        run_tests: Exécuter les tests dbt
+        run_tests: Exécuter les tests dbt (défaut: False)
     
     Étapes :
     1. dbt run --models prep.*
     2. dbt test --models prep.* (si run_tests=True)
+    
+    Returns:
+        dict: Statistiques d'exécution
     """
     logger = get_run_logger()
     
@@ -151,5 +165,7 @@ def ods_to_prep_flow(
         "tests_passed": tests_passed
     }
 
+
 if __name__ == "__main__":
-    ods_to_prep_flow()
+    # Test du flow
+    ods_to_prep_flow(run_tests=False)

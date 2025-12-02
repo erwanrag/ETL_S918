@@ -16,8 +16,7 @@ import sys
 
 sys.path.append(r'E:\Prefect\projects/ETL')
 from flows.config.pg_config import config
-from flows.utils.file_operations import safe_move  # ✅ Import mutualisé
-
+from utils.file_operations import safe_move  
 
 @task(name="📂 Scanner metadata Progress")
 def scan_db_metadata_directory():
