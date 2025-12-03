@@ -395,7 +395,7 @@ def build_ods_select_with_extent(
             extent = extent_cols[col]
             for i in range(1, extent + 1):
                 expanded_col = f"{col}_{i}"
-                # ✅ SÉPARATEUR : Point-virgule (;)
+                # [OK] SÉPARATEUR : Point-virgule (;)
                 select_parts.append(
                     f"split_part(\"{col}\", ';', {i}) AS {expanded_col}"
                 )

@@ -19,7 +19,7 @@ from flows.config.pg_config import config
 from tasks.ods_tasks import merge_ods_auto, verify_ods_after_merge
 
 
-@task(name="📊 Lister tables STAGING")
+@task(name="[DATA] Lister tables STAGING")
 def list_staging_tables():
     """Liste toutes les tables staging_etl.stg_*"""
     import psycopg2
@@ -41,14 +41,14 @@ def list_staging_tables():
     cur.close()
     conn.close()
     
-    logger.info(f"📊 {len(tables)} table(s) STAGING trouvée(s)")
+    logger.info(f"[DATA] {len(tables)} table(s) STAGING trouvée(s)")
     return tables
 
 
-@flow(name="🔄 STAGING → ODS (Merge)")
+@flow(name="[SYNC] STAGING → ODS (Merge)")
 def staging_to_ods_flow(
     table_names: Optional[List[str]] = None,
-    load_mode: str = "AUTO",  # ✅ Mode AUTO
+    load_mode: str = "AUTO",  # [OK] Mode AUTO
     run_id: Optional[str] = None
 ):
     """
@@ -77,7 +77,7 @@ def staging_to_ods_flow(
         tables = table_names
     
     if not tables:
-        logger.info("ℹ️ Aucune table à traiter")
+        logger.info("[INFO] Aucune table à traiter")
         return {"tables_merged": 0}
     
     tables_merged = []
@@ -85,7 +85,7 @@ def staging_to_ods_flow(
     
     for table in tables:
         try:
-            logger.info(f"🎯 Merge de {table} ({load_mode})")
+            logger.info(f"[TARGET] Merge de {table} ({load_mode})")
             
             result = merge_ods_auto(table, run_id, load_mode)
             verify_ods_after_merge(table, run_id)
@@ -94,12 +94,12 @@ def staging_to_ods_flow(
             total_rows_affected += rows_affected
             tables_merged.append(table)
             
-            logger.info(f"✅ {table} : {rows_affected:,} lignes affectées")
+            logger.info(f"[OK] {table} : {rows_affected:,} lignes affectées")
             
         except Exception as e:
-            logger.error(f"❌ Erreur {table} : {e}")
+            logger.error(f"[ERROR] Erreur {table} : {e}")
     
-    logger.info(f"🎯 TERMINÉ : {len(tables_merged)} table(s), {total_rows_affected:,} lignes affectées")
+    logger.info(f"[TARGET] TERMINÉ : {len(tables_merged)} table(s), {total_rows_affected:,} lignes affectées")
     
     return {
         "tables_merged": len(tables_merged),

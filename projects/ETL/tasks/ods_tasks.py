@@ -3,11 +3,11 @@
 ODS Tasks - STAGING → ODS avec extent éclaté et typage intelligent
 ============================================================================
 VERSION AMÉLIORÉE avec :
-✅ Éclatement extent avec types corrects (pas tout TEXT)
-✅ Commentaires SQL depuis métadonnées
-✅ Gestion NULL intelligente
-✅ Primary keys et index automatiques
-✅ Support FULL, INCREMENTAL, FULL_RESET
+[OK] Éclatement extent avec types corrects (pas tout TEXT)
+[OK] Commentaires SQL depuis métadonnées
+[OK] Gestion NULL intelligente
+[OK] Primary keys et index automatiques
+[OK] Support FULL, INCREMENTAL, FULL_RESET
 ============================================================================
 """
 
@@ -25,7 +25,7 @@ from flows.config.table_metadata import (
     get_table_description
 )
 
-# 🆕 Import version améliorée extent_handler
+# [NEW] Import version améliorée extent_handler
 from utils.extent_handler import (
     has_extent_columns,
     build_ods_select_with_extent_typed,
@@ -60,7 +60,7 @@ def get_load_mode_from_monitoring(table_name: str) -> str:
         return result[0] if result and result[0] else "AUTO"
             
     except Exception as e:
-        print(f"⚠️ Erreur lecture load_mode pour {table_name}: {e}")
+        print(f"[WARN] Erreur lecture load_mode pour {table_name}: {e}")
         return "AUTO"
     finally:
         cur.close()
@@ -69,7 +69,7 @@ def get_load_mode_from_monitoring(table_name: str) -> str:
 
 def add_primary_key_and_indexes(table_name: str, schema: str = 'ods'):
     """
-    🆕 Ajouter PRIMARY KEY et INDEX après création ODS
+    [NEW] Ajouter PRIMARY KEY et INDEX après création ODS
     
     Lit metadata.proginovindexes pour créer les bonnes contraintes
     """
@@ -97,18 +97,18 @@ def add_primary_key_and_indexes(table_name: str, schema: str = 'ods'):
                 pk_cols_str = ', '.join([f'"{col}"' for col in pk_columns])
                 
                 try:
-                    logger.info(f"🔑 Création PRIMARY KEY ({', '.join(pk_columns)})")
+                    logger.info(f"[KEY] Création PRIMARY KEY ({', '.join(pk_columns)})")
                     cur.execute(f"""
                         ALTER TABLE {schema}.{table_name.lower()}
                         ADD PRIMARY KEY ({pk_cols_str})
                     """)
                     conn.commit()
-                    logger.info(f"✅ PRIMARY KEY créée")
+                    logger.info(f"[OK] PRIMARY KEY créée")
                 except Exception as e:
-                    logger.warning(f"⚠️ Impossible de créer PK : {e}")
+                    logger.warning(f"[WARN] Impossible de créer PK : {e}")
                     conn.rollback()
             else:
-                logger.warning(f"⚠️ Colonnes PK manquantes : {set(pk_columns) - set(existing_pk_cols)}")
+                logger.warning(f"[WARN] Colonnes PK manquantes : {set(pk_columns) - set(existing_pk_cols)}")
         
         # 2. Créer index sur colonnes métier importantes
         # On peut lire metadata.proginovindexes ici si besoin
@@ -124,15 +124,15 @@ def add_primary_key_and_indexes(table_name: str, schema: str = 'ods'):
             """, (schema, table_name.lower()))
             
             if cur.fetchone():
-                logger.info(f"📇 Création INDEX sur _etl_valid_from")
+                logger.info(f"[INDEX] Création INDEX sur _etl_valid_from")
                 cur.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_{table_name.lower()}_etl_valid_from
                     ON {schema}.{table_name.lower()} (_etl_valid_from)
                 """)
                 conn.commit()
-                logger.info(f"✅ INDEX créé")
+                logger.info(f"[OK] INDEX créé")
         except Exception as e:
-            logger.warning(f"⚠️ Impossible de créer INDEX : {e}")
+            logger.warning(f"[WARN] Impossible de créer INDEX : {e}")
             conn.rollback()
         
     finally:
@@ -140,18 +140,18 @@ def add_primary_key_and_indexes(table_name: str, schema: str = 'ods'):
         conn.close()
 
 
-@task(name="💾 Merge ODS (FULL RESET)", retries=1)
+@task(name="[SAVE] Merge ODS (FULL RESET)", retries=1)
 def merge_ods_full_reset(table_name: str, run_id: str):
     """
-    🆕 Mode FULL RESET : DROP + CREATE + INSERT
+    [NEW] Mode FULL RESET : DROP + CREATE + INSERT
     
-    ✅ GÈRE EXTENT : Éclate avec types corrects + commentaires SQL
-    ✅ CREATE TABLE EXPLICITE : Garantit types corrects (NUMERIC, DATE, BOOLEAN)
-    ✅ PRIMARY KEY : Ajoute automatiquement
-    ✅ COMMENTAIRES : Depuis métadonnées Label
+    [OK] GÈRE EXTENT : Éclate avec types corrects + commentaires SQL
+    [OK] CREATE TABLE EXPLICITE : Garantit types corrects (NUMERIC, DATE, BOOLEAN)
+    [OK] PRIMARY KEY : Ajoute automatiquement
+    [OK] COMMENTAIRES : Depuis métadonnées Label
     """
     logger = get_run_logger()
-    logger.info(f"💾 Merge ODS FULL RESET pour {table_name}")
+    logger.info(f"[SAVE] Merge ODS FULL RESET pour {table_name}")
     
     src_table = f"staging_etl.stg_{table_name.lower()}"
     ods_table = f"ods.{table_name.lower()}"
@@ -163,10 +163,10 @@ def merge_ods_full_reset(table_name: str, run_id: str):
         # Compter source
         cur.execute(f"SELECT COUNT(*) FROM {src_table}")
         source_count = cur.fetchone()[0]
-        logger.info(f"📊 Source : {source_count:,} lignes")
+        logger.info(f"[DATA] Source : {source_count:,} lignes")
         
         if source_count == 0:
-            logger.warning(f"⚠️ Aucune ligne dans {src_table}")
+            logger.warning(f"[WARN] Aucune ligne dans {src_table}")
             return {
                 "mode": "FULL_RESET",
                 "rows_inserted": 0,
@@ -176,7 +176,7 @@ def merge_ods_full_reset(table_name: str, run_id: str):
             }
         
         # DROP table ODS
-        logger.info(f"🧨 DROP {ods_table} CASCADE")
+        logger.info(f"[DROP] DROP {ods_table} CASCADE")
         cur.execute(f"DROP TABLE IF EXISTS {ods_table} CASCADE")
         conn.commit()
         
@@ -191,10 +191,10 @@ def merge_ods_full_reset(table_name: str, run_id: str):
         staging_columns = [row[0] for row in cur.fetchall()]
         
         # ============================================================
-        # 🆕 EXTENT : CREATE TABLE explicite avec types corrects
+        # [NEW] EXTENT : CREATE TABLE explicite avec types corrects
         # ============================================================
         if has_extent_columns(table_name):
-            logger.info(f"🔀 Table avec colonnes EXTENT détectée")
+            logger.info(f"[MERGE] Table avec colonnes EXTENT détectée")
             
             # Construire SELECT avec typage + cast
             select_clause, ods_columns, column_types = build_ods_select_with_extent_typed(
@@ -202,18 +202,18 @@ def merge_ods_full_reset(table_name: str, run_id: str):
                 staging_columns
             )
             # 🐛 DEBUG
-            logger.info(f"🔍 DEBUT column_types sample:")
+            logger.info(f"[SEARCH] DEBUT column_types sample:")
             for k, v in list(column_types.items())[:15]:
                 logger.info(f"     {k}: {v}")
-            logger.info(f"🔍 FIN column_types")
-            logger.info(f"📊 {len(staging_columns)} colonnes staging → {len(ods_columns)} colonnes ODS")
-            logger.info(f"🎨 {len(column_types)} colonnes typées")
+            logger.info(f"[SEARCH] FIN column_types")
+            logger.info(f"[DATA] {len(staging_columns)} colonnes staging → {len(ods_columns)} colonnes ODS")
+            logger.info(f"[STYLE] {len(column_types)} colonnes typées")
             
-            # 🆕 Importer fonction DDL
+            # [NEW] Importer fonction DDL
             from utils.ddl_generator import generate_ods_extent_table_ddl, generate_ods_indexes_ddl
             
-            # 🆕 CREATE TABLE EXPLICITE avec types corrects
-            logger.info(f"🛠️ CREATE TABLE {ods_table} avec types explicites")
+            # [NEW] CREATE TABLE EXPLICITE avec types corrects
+            logger.info(f"[TOOLS] CREATE TABLE {ods_table} avec types explicites")
             create_ddl = generate_ods_extent_table_ddl(
                 table_name,
                 ods_columns,
@@ -222,9 +222,9 @@ def merge_ods_full_reset(table_name: str, run_id: str):
             
             cur.execute(create_ddl)
             conn.commit()
-            logger.info(f"✅ Table créée avec types corrects")
+            logger.info(f"[OK] Table créée avec types corrects")
             
-            # 🆕 INSERT INTO ... SELECT avec conversions
+            # [NEW] INSERT INTO ... SELECT avec conversions
             logger.info(f"📥 INSERT données avec conversions")
             columns_str = ', '.join([f'"{col}"' for col in ods_columns])
             
@@ -237,31 +237,31 @@ def merge_ods_full_reset(table_name: str, run_id: str):
             cur.execute(insert_sql)
             rows_inserted = cur.rowcount
             conn.commit()
-            logger.info(f"✅ {rows_inserted:,} lignes insérées")
+            logger.info(f"[OK] {rows_inserted:,} lignes insérées")
             
             # Ajouter commentaires SQL
-            logger.info(f"📝 Ajout commentaires SQL")
+            logger.info(f"[NOTE] Ajout commentaires SQL")
             comments = generate_column_comments(table_name, schema='ods')
             for comment_sql in comments:
                 try:
                     cur.execute(comment_sql)
                 except Exception as e:
-                    logger.warning(f"⚠️ Commentaire échoué : {e}")
+                    logger.warning(f"[WARN] Commentaire échoué : {e}")
             conn.commit()
-            logger.info(f"✅ {len(comments)} commentaires ajoutés")
+            logger.info(f"[OK] {len(comments)} commentaires ajoutés")
             
             # Ajouter index techniques
-            logger.info(f"📇 Ajout index techniques")
+            logger.info(f"[INDEX] Ajout index techniques")
             index_ddl = generate_ods_indexes_ddl(table_name)
             cur.execute(index_ddl)
             conn.commit()
-            logger.info(f"✅ Index créés")
+            logger.info(f"[OK] Index créés")
             
             extent_expanded = True
             
         else:
             # Pas d'extent, traitement standard
-            logger.info(f"📋 CREATE {ods_table} (sans extent)")
+            logger.info(f"[LIST] CREATE {ods_table} (sans extent)")
             
             # Utiliser DDL generator standard
             from utils.ddl_generator import generate_ods_table_ddl
@@ -282,10 +282,10 @@ def merge_ods_full_reset(table_name: str, run_id: str):
             extent_expanded = False
         
         # Ajouter PRIMARY KEY si pas déjà fait par DDL
-        logger.info(f"🔑 Vérification contraintes")
+        logger.info(f"[KEY] Vérification contraintes")
         # (PK déjà dans DDL, juste vérifier)
         
-        logger.info(f"✅ FULL RESET terminé : {rows_inserted:,} lignes insérées")
+        logger.info(f"[OK] FULL RESET terminé : {rows_inserted:,} lignes insérées")
         
         return {
             "mode": "FULL_RESET",
@@ -297,23 +297,23 @@ def merge_ods_full_reset(table_name: str, run_id: str):
         }
         
     except Exception as e:
-        logger.error(f"❌ Erreur FULL RESET : {e}")
+        logger.error(f"[ERROR] Erreur FULL RESET : {e}")
         conn.rollback()
         raise
     finally:
         cur.close()
         conn.close()
 
-@task(name="💾 Merge ODS (FULL)", retries=1)
+@task(name="[SAVE] Merge ODS (FULL)", retries=1)
 def merge_ods_full(table_name: str, run_id: str):
     """
     Mode FULL : TRUNCATE + INSERT (sans DROP)
     
-    ⚠️ Si table n'existe pas OU si extent détecté → fallback FULL_RESET
+    [WARN] Si table n'existe pas OU si extent détecté → fallback FULL_RESET
     (car extent change la structure)
     """
     logger = get_run_logger()
-    logger.info(f"💾 Merge ODS FULL pour {table_name}")
+    logger.info(f"[SAVE] Merge ODS FULL pour {table_name}")
     
     src_table = f"staging_etl.stg_{table_name.lower()}"
     ods_table = f"ods.{table_name.lower()}"
@@ -325,7 +325,7 @@ def merge_ods_full(table_name: str, run_id: str):
         # Compter source
         cur.execute(f"SELECT COUNT(*) FROM {src_table}")
         src_count = cur.fetchone()[0]
-        logger.info(f"📊 Source : {src_count:,} lignes")
+        logger.info(f"[DATA] Source : {src_count:,} lignes")
         
         # Vérifier si ODS existe
         cur.execute(f"""
@@ -338,22 +338,22 @@ def merge_ods_full(table_name: str, run_id: str):
         
         ods_exists = cur.fetchone()[0]
         
-        # 🔥 Si extent présent, TOUJOURS faire FULL_RESET (structure change)
+        # [CRITICAL] Si extent présent, TOUJOURS faire FULL_RESET (structure change)
         if has_extent_columns(table_name):
-            logger.warning(f"⚠️ Table avec extent → FULL_RESET (structure change)")
+            logger.warning(f"[WARN] Table avec extent → FULL_RESET (structure change)")
             cur.close()
             conn.close()
             return merge_ods_full_reset(table_name, run_id)
         
         # Si table n'existe pas, faire FULL_RESET
         if not ods_exists:
-            logger.info(f"🆕 Table n'existe pas → FULL_RESET")
+            logger.info(f"[NEW] Table n'existe pas → FULL_RESET")
             cur.close()
             conn.close()
             return merge_ods_full_reset(table_name, run_id)
         
         # TRUNCATE + INSERT (seulement si pas d'extent)
-        logger.info(f"🧨 TRUNCATE {ods_table}")
+        logger.info(f"[DROP] TRUNCATE {ods_table}")
         cur.execute(f"TRUNCATE TABLE {ods_table}")
         conn.commit()
         
@@ -362,7 +362,7 @@ def merge_ods_full(table_name: str, run_id: str):
         inserted_count = cur.rowcount
         conn.commit()
         
-        logger.info(f"✅ {inserted_count:,} lignes insérées")
+        logger.info(f"[OK] {inserted_count:,} lignes insérées")
         
         return {
             'rows_inserted': inserted_count,
@@ -373,7 +373,7 @@ def merge_ods_full(table_name: str, run_id: str):
         }
         
     except Exception as e:
-        logger.error(f"❌ Erreur : {e}")
+        logger.error(f"[ERROR] Erreur : {e}")
         conn.rollback()
         raise
     finally:
@@ -381,26 +381,26 @@ def merge_ods_full(table_name: str, run_id: str):
         conn.close()
 
 
-@task(name="💾 Merge ODS (INCREMENTAL)", retries=1)
+@task(name="[SAVE] Merge ODS (INCREMENTAL)", retries=1)
 def merge_ods_incremental(table_name: str, run_id: str):
     """
     Mode INCREMENTAL : UPSERT (INSERT nouveaux + UPDATE modifiés)
     
-    ⚠️ Si extent présent → Fallback FULL (impossible de merger colonnes éclatées)
+    [WARN] Si extent présent → Fallback FULL (impossible de merger colonnes éclatées)
     """
     logger = get_run_logger()
-    logger.info(f"💾 Merge ODS INCREMENTAL pour {table_name}")
+    logger.info(f"[SAVE] Merge ODS INCREMENTAL pour {table_name}")
     
     pk_columns = get_primary_keys(table_name)
     
     if not pk_columns:
-        raise ValueError(f"❌ Aucune PK pour {table_name}")
+        raise ValueError(f"[ERROR] Aucune PK pour {table_name}")
     
-    logger.info(f"🔑 PK : {', '.join(pk_columns)}")
+    logger.info(f"[KEY] PK : {', '.join(pk_columns)}")
     
-    # ⚠️ EXTENT + INCREMENTAL non supporté
+    # [WARN] EXTENT + INCREMENTAL non supporté
     if has_extent_columns(table_name):
-        logger.warning(f"⚠️ INCREMENTAL avec extent non supporté → Fallback FULL")
+        logger.warning(f"[WARN] INCREMENTAL avec extent non supporté → Fallback FULL")
         return merge_ods_full(table_name, run_id)
     
     src_table = f"staging_etl.stg_{table_name.lower()}"
@@ -422,7 +422,7 @@ def merge_ods_incremental(table_name: str, run_id: str):
         ods_exists = cur.fetchone()[0]
         
         if not ods_exists:
-            logger.info(f"🆕 Table n'existe pas → FULL_RESET")
+            logger.info(f"[NEW] Table n'existe pas → FULL_RESET")
             cur.close()
             conn.close()
             return merge_ods_full_reset(table_name, run_id)
@@ -443,7 +443,7 @@ def merge_ods_incremental(table_name: str, run_id: str):
         pk_join = ' AND '.join([f'target."{pk}" = source."{pk}"' for pk in pk_columns])
         
         # INSERT nouveaux
-        logger.info("🔄 INSERT nouveaux")
+        logger.info("[SYNC] INSERT nouveaux")
         cur.execute(f"""
             INSERT INTO {ods_table} ({columns_str})
             SELECT {columns_str} FROM {src_table} AS source
@@ -454,7 +454,7 @@ def merge_ods_incremental(table_name: str, run_id: str):
         """)
         inserted_count = cur.rowcount
         conn.commit()
-        logger.info(f"➕ {inserted_count:,} lignes insérées")
+        logger.info(f"[ADD] {inserted_count:,} lignes insérées")
         
         # UPDATE modifiés (si hashdiff présent)
         if '_etl_hashdiff' in columns:
@@ -479,12 +479,12 @@ def merge_ods_incremental(table_name: str, run_id: str):
             """)
             updated_count = cur.rowcount
             conn.commit()
-            logger.info(f"🔄 {updated_count:,} lignes mises à jour")
+            logger.info(f"[SYNC] {updated_count:,} lignes mises à jour")
         else:
             updated_count = 0
         
         total = inserted_count + updated_count
-        logger.info(f"✅ {total:,} lignes affectées")
+        logger.info(f"[OK] {total:,} lignes affectées")
         
         return {
             'rows_inserted': inserted_count,
@@ -496,7 +496,7 @@ def merge_ods_incremental(table_name: str, run_id: str):
         }
         
     except Exception as e:
-        logger.error(f"❌ Erreur : {e}")
+        logger.error(f"[ERROR] Erreur : {e}")
         conn.rollback()
         raise
     finally:
@@ -504,10 +504,10 @@ def merge_ods_incremental(table_name: str, run_id: str):
         conn.close()
 
 
-@task(name="💾 Merge ODS auto")
+@task(name="[SAVE] Merge ODS auto")
 def merge_ods_auto(table_name: str, run_id: str, load_mode: str = "AUTO"):
     """
-    🎯 ROUTER : Merger STAGING → ODS avec mode automatique ou forcé
+    [TARGET] ROUTER : Merger STAGING → ODS avec mode automatique ou forcé
     
     Priorité de détermination du mode :
     1. load_mode passé en paramètre (si != "AUTO")
@@ -525,52 +525,52 @@ def merge_ods_auto(table_name: str, run_id: str, load_mode: str = "AUTO"):
     # Si mode AUTO, lire depuis sftp_monitoring
     if load_mode == "AUTO":
         load_mode = get_load_mode_from_monitoring(table_name)
-        logger.info(f"🤖 Mode depuis sftp_monitoring : {load_mode}")
+        logger.info(f"[AUTO] Mode depuis sftp_monitoring : {load_mode}")
     else:
-        logger.info(f"🎯 Mode forcé : {load_mode}")
+        logger.info(f"[TARGET] Mode forcé : {load_mode}")
     
     # Description table
     table_desc = get_table_description(table_name)
     if table_desc:
-        logger.info(f"📋 {table_desc}")
+        logger.info(f"[LIST] {table_desc}")
     
     # ============================================================
     # ROUTER selon load_mode
     # ============================================================
     
     if load_mode == "FULL_RESET":
-        logger.info(f"💾 Mode FULL_RESET - Réinitialisation complète")
+        logger.info(f"[SAVE] Mode FULL_RESET - Réinitialisation complète")
         return merge_ods_full_reset(table_name, run_id)
         
     elif load_mode == "FULL":
-        logger.info(f"💾 Mode FULL - TRUNCATE + INSERT")
+        logger.info(f"[SAVE] Mode FULL - TRUNCATE + INSERT")
         return merge_ods_full(table_name, run_id)
         
     elif load_mode == "INCREMENTAL":
         pk = get_primary_keys(table_name)
         if not pk:
-            logger.warning(f"⚠️ Mode INCREMENTAL demandé mais pas de PK → Fallback sur FULL")
+            logger.warning(f"[WARN] Mode INCREMENTAL demandé mais pas de PK → Fallback sur FULL")
             return merge_ods_full(table_name, run_id)
         else:
-            logger.info(f"💾 Mode INCREMENTAL - UPSERT (PK: {pk})")
+            logger.info(f"[SAVE] Mode INCREMENTAL - UPSERT (PK: {pk})")
             return merge_ods_incremental(table_name, run_id)
     
     else:  # AUTO ou mode inconnu
-        logger.info(f"🤖 Détection automatique (mode={load_mode})")
+        logger.info(f"[AUTO] Détection automatique (mode={load_mode})")
         
         has_pk = has_primary_key(table_name)
         force_full = should_force_full(table_name)
         
         if has_pk and not force_full:
             pk = get_primary_keys(table_name)
-            logger.info(f"🤖 AUTO → INCREMENTAL (PK: {pk})")
+            logger.info(f"[AUTO] AUTO → INCREMENTAL (PK: {pk})")
             return merge_ods_incremental(table_name, run_id)
         else:
-            logger.info(f"🤖 AUTO → FULL")
+            logger.info(f"[AUTO] AUTO → FULL")
             return merge_ods_full(table_name, run_id)
 
 
-@task(name="✅ Vérifier ODS")
+@task(name="[OK] Vérifier ODS")
 def verify_ods_after_merge(table_name: str, run_id: str):
     """Vérification post-merge"""
     logger = get_run_logger()
@@ -584,7 +584,7 @@ def verify_ods_after_merge(table_name: str, run_id: str):
         cur.execute(f"SELECT COUNT(*) FROM {ods_table}")
         total = cur.fetchone()[0]
         
-        logger.info(f"✅ ODS : {total:,} lignes")
+        logger.info(f"[OK] ODS : {total:,} lignes")
         
         return {'exists': True, 'total_rows': total}
         

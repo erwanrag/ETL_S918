@@ -18,12 +18,12 @@ sys.path.append(r'E:\Prefect\projects/ETL')
 from flows.config.pg_config import config
 from utils.file_operations import safe_move  
 
-@task(name="📂 Scanner metadata Progress")
+@task(name="[OPEN] Scanner metadata Progress")
 def scan_db_metadata_directory():
     logger = get_run_logger()
     metadata_dir = Path(config.sftp_db_metadata_dir)
     files_found = list(metadata_dir.glob('*.json'))
-    logger.info(f"📊 {len(files_found)} fichier(s) metadata trouvé(s)")
+    logger.info(f"[DATA] {len(files_found)} fichier(s) metadata trouvé(s)")
     return [str(f) for f in files_found]
 
 
@@ -40,10 +40,10 @@ def load_metadata_to_postgres(file_path: str):
         table = data.get('table')
         rows = data.get('data', [])
         
-        logger.info(f"📄 {file_name} : {schema}.{table} ({len(rows)} lignes)")
+        logger.info(f"[FILE] {file_name} : {schema}.{table} ({len(rows)} lignes)")
         
         if not rows:
-            logger.warning(f"⚠️ Aucune donnée dans {file_name}")
+            logger.warning(f"[WARN] Aucune donnée dans {file_name}")
             return 0
         
         conn = psycopg2.connect(config.get_connection_string())
@@ -87,7 +87,7 @@ def load_metadata_to_postgres(file_path: str):
         execute_batch(cur, insert_sql, data_tuples)
         
         conn.commit()
-        logger.info(f"✅ {len(rows)} lignes chargées dans {table_name}")
+        logger.info(f"[OK] {len(rows)} lignes chargées dans {table_name}")
         
         cur.close()
         conn.close()
@@ -95,14 +95,14 @@ def load_metadata_to_postgres(file_path: str):
         return len(rows)
         
     except Exception as e:
-        logger.error(f"❌ Erreur chargement {file_name}: {e}")
+        logger.error(f"[ERROR] Erreur chargement {file_name}: {e}")
         if 'conn' in locals():
             conn.rollback()
             conn.close()
         raise
 
 
-@task(name="📦 Archiver metadata + Nettoyage serveur")
+@task(name="[PACKAGE] Archiver metadata + Nettoyage serveur")
 def archive_metadata_file(file_path: str):
     logger = get_run_logger()
     today = datetime.now().strftime('%Y-%m-%d')
@@ -113,10 +113,10 @@ def archive_metadata_file(file_path: str):
     archive_dir.mkdir(parents=True, exist_ok=True)
     dest_path = archive_dir / file_name
 
-    if safe_move(file_path, str(dest_path)):  # ✅ Fonction mutualisée
-        logger.info(f"📦 Archivé : {file_name}")
+    if safe_move(file_path, str(dest_path)):  # [OK] Fonction mutualisée
+        logger.info(f"[PACKAGE] Archivé : {file_name}")
     else:
-        logger.warning(f"⚠️ Impossible d'archiver : {file_name}")
+        logger.warning(f"[WARN] Impossible d'archiver : {file_name}")
         return
     
     # ÉTAPE 2 : Nettoyer serveur SFTP
@@ -127,14 +127,14 @@ def archive_metadata_file(file_path: str):
             os.remove(sftp_file)
             logger.info(f"🗑️ Supprimé du serveur SFTP : {file_name}")
         except Exception as e:
-            logger.warning(f"⚠️ Impossible de supprimer du serveur SFTP : {e}")
+            logger.warning(f"[WARN] Impossible de supprimer du serveur SFTP : {e}")
 
 
-@flow(name="🗄️ Import Metadata Progress → PostgreSQL", log_prints=True)
+@flow(name="[DB] Import Metadata Progress → PostgreSQL", log_prints=True)
 def db_metadata_import_flow():
     logger = get_run_logger()
     logger.info("=" * 60)
-    logger.info("🗄️ Import Metadata Progress")
+    logger.info("[DB] Import Metadata Progress")
     logger.info("=" * 60)
     
     total_rows = 0
@@ -143,7 +143,7 @@ def db_metadata_import_flow():
         files = scan_db_metadata_directory()
         
         if not files:
-            logger.info("ℹ️ Aucun fichier metadata à traiter")
+            logger.info("[INFO] Aucun fichier metadata à traiter")
             return
         
         for file_path in files:
@@ -152,15 +152,15 @@ def db_metadata_import_flow():
                 total_rows += rows
                 archive_metadata_file(file_path)
             except Exception as e:
-                logger.error(f"❌ Erreur {file_path}: {e}")
+                logger.error(f"[ERROR] Erreur {file_path}: {e}")
                 continue
         
         logger.info("=" * 60)
-        logger.info(f"✅ Import terminé : {total_rows:,} lignes metadata")
+        logger.info(f"[OK] Import terminé : {total_rows:,} lignes metadata")
         logger.info("=" * 60)
         
     except Exception as e:
-        logger.error(f"❌ Erreur flow : {e}")
+        logger.error(f"[ERROR] Erreur flow : {e}")
         raise
 
 

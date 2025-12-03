@@ -62,7 +62,7 @@ if __name__ == "__main__":
     extent_cols = get_extent_columns()
     
     for table, columns in extent_cols.items():
-        print(f"\n📋 {table}")
+        print(f"\n[LIST] {table}")
         for col_info in columns:
             col_name = col_info['column']
             extent = col_info['extent']
@@ -73,6 +73,6 @@ if __name__ == "__main__":
     print(f"Total : {len(extent_cols)} table(s) avec colonnes extent")
     print("=" * 70)
     
-    print("\n⚠️ ACTION REQUISE :")
+    print("\n[WARN] ACTION REQUISE :")
     print("  Ces colonnes doivent être éclatées en ODS pour une structure propre")
     print("  Exemple : zal VARCHAR → zal_1, zal_2, zal_3, zal_4, zal_5")

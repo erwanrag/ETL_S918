@@ -68,7 +68,7 @@ def load_table_metadata() -> Dict[str, dict]:
             }
         
         _CACHE_LOADED = True
-        print(f"✅ Métadonnées chargées : {len(_TABLE_METADATA_CACHE)} tables")
+        print(f"[OK] Métadonnées chargées : {len(_TABLE_METADATA_CACHE)} tables")
         
     finally:
         cur.close()
@@ -128,4 +128,4 @@ def reload_metadata():
 try:
     load_table_metadata()
 except Exception as e:
-    print(f"⚠️ Impossible de charger les métadonnées : {e}")
+    print(f"[WARN] Impossible de charger les métadonnées : {e}")

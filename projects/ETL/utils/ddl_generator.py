@@ -205,17 +205,17 @@ def generate_ods_extent_table_ddl(
         if col in technical_cols:
             continue
         
-        # ✅ PRIORITÉ 1 : column_types (extent éclatés avec types corrects)
+        # [OK] PRIORITÉ 1 : column_types (extent éclatés avec types corrects)
         if col in column_types:
             pg_type = column_types[col]
         
-        # ✅ PRIORITÉ 2 : staging_types (colonnes non-extent)
+        # [OK] PRIORITÉ 2 : staging_types (colonnes non-extent)
         elif col in staging_types:
             pg_type = staging_types[col]
         
-        # ❌ FALLBACK : Ne devrait JAMAIS arriver
+        # [ERROR] FALLBACK : Ne devrait JAMAIS arriver
         else:
-            print(f"⚠️ WARNING: Colonne {col} sans type défini, fallback TEXT")
+            print(f"[WARN] WARNING: Colonne {col} sans type défini, fallback TEXT")
             pg_type = 'TEXT'
         
         # NOT NULL sur PK uniquement
@@ -298,11 +298,11 @@ def create_table_if_not_exists(table_name: str, schema: str):
         cur.execute(ddl)
         conn.commit()
         
-        print(f"✅ Table {schema}.{table_name.lower()} créée ou vérifiée")
+        print(f"[OK] Table {schema}.{table_name.lower()} créée ou vérifiée")
         
     except Exception as e:
         conn.rollback()
-        print(f"❌ Erreur création table {schema}.{table_name}: {e}")
+        print(f"[ERROR] Erreur création table {schema}.{table_name}: {e}")
         raise
         
     finally:
@@ -343,7 +343,7 @@ def generate_all_tables_ddl(schema: str, tables: List[str] = None) -> str:
             ddl_parts.append("")
             
         except Exception as e:
-            ddl_parts.append(f"-- ❌ Erreur {table}: {e}\n")
+            ddl_parts.append(f"-- [ERROR] Erreur {table}: {e}\n")
     
     return '\n'.join(ddl_parts)
 

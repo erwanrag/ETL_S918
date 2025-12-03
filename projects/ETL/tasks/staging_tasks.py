@@ -19,14 +19,14 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 from flows.config.pg_config import config
 from utils.metadata_helper import get_columns_metadata
-from utils.types import build_table_columns_sql
+from utils.custom_types import build_table_columns_sql
 
 
 # ============================================================================
 # CREATE TABLE STAGING
 # ============================================================================
 
-@task(name="🧱 Créer table STAGING typée")
+@task(name="[BUILD] Créer table STAGING typée")
 def create_staging_table(table_name: str):
     """
     Crée staging_etl.stg_{table} à partir de metadata.proginovcolumns
@@ -43,7 +43,7 @@ def create_staging_table(table_name: str):
         # Récupérer métadonnées complètes
         cols_meta: Dict[str, Dict] = get_columns_metadata(base)
         if not cols_meta:
-            logger.error(f"❌ Aucune metadata trouvée pour {base}")
+            logger.error(f"[ERROR] Aucune metadata trouvée pour {base}")
             return
 
         # Colonnes typées (types.py gère automatiquement Extent → TEXT)
@@ -57,11 +57,11 @@ def create_staging_table(table_name: str):
         """
 
         # Supprime l'ancienne table
-        logger.info(f"🧨 DROP TABLE IF EXISTS {stg_table}")
+        logger.info(f"[DROP] DROP TABLE IF EXISTS {stg_table}")
         cur.execute(f"DROP TABLE IF EXISTS {stg_table} CASCADE")
 
         # Crée la nouvelle table typée
-        logger.info(f"🧱 CREATE TABLE {stg_table}")
+        logger.info(f"[BUILD] CREATE TABLE {stg_table}")
         create_sql = f"""
             CREATE SCHEMA IF NOT EXISTS staging_etl;
 
@@ -72,10 +72,10 @@ def create_staging_table(table_name: str):
         cur.execute(create_sql)
         conn.commit()
 
-        logger.info(f"✅ Table {stg_table} créée")
+        logger.info(f"[OK] Table {stg_table} créée")
 
     except Exception as e:
-        logger.error(f"❌ Erreur création {stg_table}: {e}")
+        logger.error(f"[ERROR] Erreur création {stg_table}: {e}")
         conn.rollback()
         raise
     finally:
@@ -125,7 +125,7 @@ def load_raw_to_staging(table_name: str, run_id: str):
         """, (f"raw_{base}",))
         
         if not cur.fetchone()[0]:
-            logger.error(f"❌ Table {raw_table} introuvable")
+            logger.error(f"[ERROR] Table {raw_table} introuvable")
             return
 
         # Métadata colonnes
@@ -133,7 +133,7 @@ def load_raw_to_staging(table_name: str, run_id: str):
         business_cols = list(cols_meta.keys())
 
         if not business_cols:
-            logger.error(f"❌ Aucune colonne business pour {base}")
+            logger.error(f"[ERROR] Aucune colonne business pour {base}")
             return
 
         # Debug : afficher colonnes Extent
@@ -142,10 +142,10 @@ def load_raw_to_staging(table_name: str, run_id: str):
             extent = meta.get("Extent", 0) or 0
             if extent > 0:
                 extent_count += 1
-                logger.info(f"  🔀 {col}: Extent={extent}, ProgressType={meta.get('ProgressType')}")
+                logger.info(f"  [MERGE] {col}: Extent={extent}, ProgressType={meta.get('ProgressType')}")
         
         if extent_count > 0:
-            logger.info(f"📊 {extent_count} colonne(s) avec Extent détectée(s)")
+            logger.info(f"[DATA] {extent_count} colonne(s) avec Extent détectée(s)")
 
         # ===================================================================
         # Construire SELECT typé & nettoyé
@@ -155,7 +155,7 @@ def load_raw_to_staging(table_name: str, run_id: str):
         for col, info in cols_meta.items():
             pt = (info.get("ProgressType") or "").lower()
             dt = (info.get("DataType") or "").lower()
-            extent = info.get("Extent", 0) or 0  # 🔥 RÉCUPÉRER EXTENT
+            extent = info.get("Extent", 0) or 0  # [CRITICAL] RÉCUPÉRER EXTENT
 
             source = f'"{col}"'
 
@@ -236,7 +236,7 @@ END AS "{col}"
             all_chunks = " || '|' || ".join(chunks)
             hash_expr = f"MD5({all_chunks}) AS _etl_hashdiff"
             
-            logger.info(f"⚠️ Table large : {len(business_cols)} colonnes → {len(chunks)} chunks pour hashdiff")
+            logger.info(f"[WARN] Table large : {len(business_cols)} colonnes → {len(chunks)} chunks pour hashdiff")
 
         # ===================================================================
         # SELECT complet
@@ -264,12 +264,12 @@ END AS "{col}"
         cur.execute(insert_sql)
         conn.commit()
 
-        logger.info(f"✅ {cur.rowcount:,} lignes insérées dans {stg_table}")
+        logger.info(f"[OK] {cur.rowcount:,} lignes insérées dans {stg_table}")
 
         return cur.rowcount
 
     except Exception as e:
-        logger.error(f"❌ Erreur load_raw_to_staging({table_name}): {e}")
+        logger.error(f"[ERROR] Erreur load_raw_to_staging({table_name}): {e}")
         conn.rollback()
         raise
     finally:

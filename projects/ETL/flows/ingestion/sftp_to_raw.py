@@ -27,32 +27,32 @@ from flows.config.pg_config import config
 from utils.file_operations import archive_and_cleanup
 
 
-@task(name="📂 Scanner SFTP parquet")
+@task(name="[OPEN] Scanner SFTP parquet")
 def scan_sftp_directory():
     logger = get_run_logger()
     parquet_dir = Path(config.sftp_parquet_dir)
     files = list(parquet_dir.glob("*.parquet"))
-    logger.info(f"📊 {len(files)} fichier(s) trouvés")
+    logger.info(f"[DATA] {len(files)} fichier(s) trouvés")
     return [str(f) for f in files]
 
 
-@task(name="📄 Lire metadata JSON")
+@task(name="[FILE] Lire metadata JSON")
 def read_metadata_json(parquet_path: str):
     logger = get_run_logger()
     base = Path(parquet_path).stem
     meta_path = Path(config.sftp_metadata_dir) / f"{base}_metadata.json"
 
     if not meta_path.exists():
-        logger.warning(f"⚠️ Metadata introuvable : {meta_path}")
+        logger.warning(f"[WARN] Metadata introuvable : {meta_path}")
         return None
 
     with open(meta_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    logger.info(f"📄 Metadata lu : {meta_path.name}")
+    logger.info(f"[FILE] Metadata lu : {meta_path.name}")
     return data
 
 
-@task(name="📊 Lire status JSON")
+@task(name="[DATA] Lire status JSON")
 def read_status_json(parquet_path: str):
     logger = get_run_logger()
     base = Path(parquet_path).stem
@@ -66,7 +66,7 @@ def read_status_json(parquet_path: str):
     return data
 
 
-@task(name="📝 Logger dans sftp_monitoring")
+@task(name="[NOTE] Logger dans sftp_monitoring")
 def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
     """
     Logger fichier SFTP dans sftp_monitoring.sftp_file_log
@@ -89,7 +89,7 @@ def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
     file_name = os.path.basename(file_path)
     file_size = os.path.getsize(file_path)
 
-    # ✅ AMÉLIORATION : Structure metadata_json claire
+    # [OK] AMÉLIORATION : Structure metadata_json claire
     full_meta = {
         "file_extension": ".parquet",
         "detected_timestamp": datetime.now().isoformat(),
@@ -104,7 +104,7 @@ def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
     elif metadata:
         load_mode = metadata.get('load_mode', 'UNKNOWN')
     
-    logger.info(f"📋 {file_name} - load_mode: {load_mode}")
+    logger.info(f"[LIST] {file_name} - load_mode: {load_mode}")
 
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
@@ -118,12 +118,12 @@ def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
         log_id = cur.fetchone()[0]
         conn.commit()
         
-        logger.info(f"📝 Log ID {log_id} créé")
+        logger.info(f"[NOTE] Log ID {log_id} créé")
         
         return log_id
         
     except Exception as e:
-        logger.error(f"❌ Erreur log_file_to_monitoring : {e}")
+        logger.error(f"[ERROR] Erreur log_file_to_monitoring : {e}")
         conn.rollback()
         raise
     finally:
@@ -166,11 +166,11 @@ def load_to_raw(file_path: str, log_id: int, metadata: dict):
     cur = conn.cursor()
 
     # DROP + CREATE
-    logger.info(f"🧨 DROP {full_table}")
+    logger.info(f"[DROP] DROP {full_table}")
     cur.execute(f'DROP TABLE IF EXISTS {full_table} CASCADE;')
     conn.commit()
 
-    logger.info(f"🛠️ CREATE {full_table}")
+    logger.info(f"[TOOLS] CREATE {full_table}")
     engine = create_engine(config.get_sqlalchemy_url(config.schema_raw))
     df.head(0).to_sql(
         name=table_name,
@@ -181,7 +181,7 @@ def load_to_raw(file_path: str, log_id: int, metadata: dict):
     )
 
     # COPY
-    logger.info("🚀 COPY données")
+    logger.info("[START] COPY données")
     output = StringIO()
     df.to_csv(output, sep="\t", header=False, index=False, na_rep="\\N")
     output.seek(0)
@@ -195,7 +195,7 @@ def load_to_raw(file_path: str, log_id: int, metadata: dict):
     cur.copy_expert(copy_sql, output)
     conn.commit()
 
-    logger.info(f"✅ {len(df):,} lignes chargées")
+    logger.info(f"[OK] {len(df):,} lignes chargées")
     cur.close()
     conn.close()
 
@@ -206,7 +206,7 @@ def load_to_raw(file_path: str, log_id: int, metadata: dict):
     }
 
 
-@task(name="📦 Archiver + Nettoyer SFTP")
+@task(name="[PACKAGE] Archiver + Nettoyer SFTP")
 def archive_files(parquet_path: str):
     logger = get_run_logger()
     base = Path(parquet_path).stem
@@ -250,7 +250,7 @@ def sftp_to_raw_flow():
     files = scan_sftp_directory()
 
     if not files:
-        logger.info("ℹ️ Aucun fichier parquet")
+        logger.info("[INFO] Aucun fichier parquet")
         return {"tables_loaded": 0, "total_rows": 0}
 
     total_rows = 0
@@ -262,11 +262,11 @@ def sftp_to_raw_flow():
             status = read_status_json(f)
             
             if not meta:
-                logger.warning(f"⚠️ Skip {f} - pas de metadata")
+                logger.warning(f"[WARN] Skip {f} - pas de metadata")
                 continue
             
             table_name = meta.get('table_name', 'unknown')
-            logger.info(f"🎯 Traitement de {table_name}")
+            logger.info(f"[TARGET] Traitement de {table_name}")
             
             log_id = log_file_to_monitoring(f, meta, status)
             result = load_to_raw(f, log_id, meta)
@@ -275,12 +275,12 @@ def sftp_to_raw_flow():
             total_rows += result['rows_loaded']
             tables_loaded.append(table_name)
             
-            logger.info(f"✅ {table_name} : {result['rows_loaded']:,} lignes")
+            logger.info(f"[OK] {table_name} : {result['rows_loaded']:,} lignes")
             
         except Exception as e:
-            logger.error(f"❌ Erreur {f} : {e}")
+            logger.error(f"[ERROR] Erreur {f} : {e}")
 
-    logger.info(f"🎯 TERMINÉ : {len(tables_loaded)} table(s), {total_rows:,} lignes")
+    logger.info(f"[TARGET] TERMINÉ : {len(tables_loaded)} table(s), {total_rows:,} lignes")
     
     return {
         "tables_loaded": len(tables_loaded),

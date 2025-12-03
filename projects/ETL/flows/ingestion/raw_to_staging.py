@@ -19,7 +19,7 @@ from flows.config.pg_config import config
 from tasks.staging_tasks import create_staging_table, load_raw_to_staging
 
 
-@task(name="📊 Lister tables RAW")
+@task(name="[DATA] Lister tables RAW")
 def list_raw_tables():
     import psycopg2
     conn = psycopg2.connect(config.get_connection_string())
@@ -40,7 +40,7 @@ def list_raw_tables():
     return tables
 
 
-@flow(name="📋 RAW → STAGING_ETL (typé + nettoyage + hashdiff)")
+@flow(name="[LIST] RAW → STAGING_ETL (typé + nettoyage + hashdiff)")
 def raw_to_staging_flow(
     table_names: Optional[List[str]] = None,
     run_id: Optional[str] = None
@@ -55,13 +55,13 @@ def raw_to_staging_flow(
     # Tables RAW à traiter
     tables = table_names if table_names else list_raw_tables()
 
-    logger.info(f"🎯 {len(tables)} table(s) à traiter")
+    logger.info(f"[TARGET] {len(tables)} table(s) à traiter")
 
     total_rows = 0
     processed = []
 
     for table in tables:
-        logger.info(f"🔧 Création STAGING {table}")
+        logger.info(f"[CONFIG] Création STAGING {table}")
         create_staging_table(table)  # <-- NOUVEAU
 
         logger.info(f"📥 Chargement RAW → STAGING {table}")
@@ -70,7 +70,7 @@ def raw_to_staging_flow(
         total_rows += (rows or 0)
         processed.append(table)
 
-        logger.info(f"✅ {table} : {rows:,} lignes")
+        logger.info(f"[OK] {table} : {rows:,} lignes")
 
     return {
         "tables_processed": len(processed),

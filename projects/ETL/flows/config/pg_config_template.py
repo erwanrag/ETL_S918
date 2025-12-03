@@ -2,8 +2,8 @@
 ============================================================================
 Configuration PostgreSQL Template (à copier vers pg_config.py)
 ============================================================================
-⚠️ NE PAS MODIFIER CE FICHIER DIRECTEMENT
-⚠️ Copier vers pg_config.py et remplir avec vos credentials
+[WARN] NE PAS MODIFIER CE FICHIER DIRECTEMENT
+[WARN] Copier vers pg_config.py et remplir avec vos credentials
 ============================================================================
 """
 
@@ -20,7 +20,7 @@ class PostgreSQLConfig:
     port: int = int(os.getenv("PG_PORT", "5432"))
     database: str = os.getenv("PG_DATABASE", "etl_db")
     user: str = os.getenv("PG_USER", "postgres")
-    password: str = os.getenv("PG_PASSWORD", "CHANGE_ME")  # ⚠️ À CHANGER
+    password: str = os.getenv("PG_PASSWORD", "CHANGE_ME")  # [WARN] À CHANGER
     
     # Schémas
     schema_raw: str = "raw"
@@ -44,7 +44,7 @@ class PostgreSQLConfig:
     # Logs Prefect
     log_dir: str = r"E:\Prefect\projects\ETL\logs"
     
-    # dbt project - ✅ CORRIGÉ
+    # dbt project - [OK] CORRIGÉ
     dbt_project_dir: str = r"E:\Prefect\projects\ETL\dbt\cbm_analytics"
     
     # -------------------------------------------------------------------------

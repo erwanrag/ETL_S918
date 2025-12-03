@@ -6,10 +6,10 @@ SÉPARATEUR : Point-virgule (;)
 IMPORTANT : Progress stocke les noms de tables en MAJUSCULES
 
 AMÉLIORATIONS :
-✅ Typage intelligent des colonnes éclatées (pas tout en TEXT)
-✅ Génération des commentaires SQL depuis Label
-✅ Gestion NULL pour valeurs vides et "?"
-✅ Support CREATE TABLE avec types corrects
+[OK] Typage intelligent des colonnes éclatées (pas tout en TEXT)
+[OK] Génération des commentaires SQL depuis Label
+[OK] Gestion NULL pour valeurs vides et "?"
+[OK] Support CREATE TABLE avec types corrects
 
 TYPAGE :
 - ProgressType=character → VARCHAR(Width)
@@ -123,7 +123,7 @@ def get_pg_type_for_extent_column(progress_type: str, data_type: str, width: int
     """
     pt = progress_type.lower()
     
-    # ⚠️ CRITICAL: Convertir width et scale en int (peuvent être string depuis DB)
+    # [WARN] CRITICAL: Convertir width et scale en int (peuvent être string depuis DB)
     try:
         width = int(width) if width else 0
     except (ValueError, TypeError):
@@ -204,7 +204,7 @@ def build_ods_select_with_extent_typed(
     staging_columns: List[str]
 ) -> Tuple[str, List[str], Dict[str, str]]:
     """
-    🆕 VERSION AMÉLIORÉE : Construire SELECT avec typage ET cast intelligent
+    [NEW] VERSION AMÉLIORÉE : Construire SELECT avec typage ET cast intelligent
     
     SÉPARATEUR : Point-virgule (;)
     
@@ -249,7 +249,7 @@ def build_ods_select_with_extent_typed(
             for i in range(1, extent + 1):
                 expanded_col = f"{col}_{i}"
                 
-                # 🔥 GESTION NULL STRICTE : Toutes valeurs vides → NULL
+                # [CRITICAL] GESTION NULL STRICTE : Toutes valeurs vides → NULL
                 if pg_type.startswith('VARCHAR'):
                     # VARCHAR : NULLIF pour "", "?", espaces
                     expr = f"""NULLIF(NULLIF(NULLIF(TRIM(split_part("{col}", ';', {i})), ''), '?'), ' ')::{pg_type}"""
@@ -323,7 +323,7 @@ def generate_column_comments(
     schema: str = 'ods'
 ) -> List[str]:
     """
-    🆕 Générer les commentaires SQL pour colonnes extent éclatées
+    [NEW] Générer les commentaires SQL pour colonnes extent éclatées
     
     Args:
         table_name: Nom de la table (ex: 'client')
@@ -344,7 +344,7 @@ def generate_column_comments(
         extent = meta['extent']
         label = meta['label'].strip("'\"") if meta['label'] else f"Colonne {col_name}"
         
-        # 🔥 ÉCHAPPER les quotes simples pour SQL
+        # [CRITICAL] ÉCHAPPER les quotes simples pour SQL
         label = label.replace("'", "''")
         
         for i in range(1, extent + 1):

@@ -4,8 +4,8 @@ Configuration PostgreSQL pour Prefect Flows
 ============================================================================
 Fichier : E:\Prefect\projects\ETL\flows\config\pg_config.py
 
-⚠️ SECURITÉ : Utilise fichier .env pour les credentials
-⚠️ Ce fichier peut être versionné (pas de secrets en dur)
+[WARN] SECURITÉ : Utilise fichier .env pour les credentials
+[WARN] Ce fichier peut être versionné (pas de secrets en dur)
 ============================================================================
 """
 
@@ -40,13 +40,13 @@ class PostgreSQLConfig:
     port: int = int(os.getenv("ETL_PG_PORT", "5432"))
     database: str = os.getenv("ETL_PG_DATABASE", "etl_db")
     user: str = os.getenv("ETL_PG_USER", "postgres")
-    password: str = os.getenv("ETL_PG_PASSWORD", "")  # ⚠️ Doit être défini en env
+    password: str = os.getenv("ETL_PG_PASSWORD", "")  # [WARN] Doit être défini en env
     
     # Validation au démarrage
     def __post_init__(self):
         if not self.password:
             raise ValueError(
-                "❌ Variable d'environnement ETL_PG_PASSWORD non définie!\n"
+                "[ERROR] Variable d'environnement ETL_PG_PASSWORD non définie!\n"
                 "Exécuter en tant qu'ADMIN : \n"
                 "  cd E:\\Prefect\\projects\\ETL\\scripts\n"
                 "  .\\setup_env_vars.ps1\n"
@@ -65,7 +65,7 @@ class PostgreSQLConfig:
     # SFTP MIRRORING LOCAL (S918)
     # -------------------------------------------------------------------------
     #
-    # ⚠️ IMPORTANT :
+    # [WARN] IMPORTANT :
     # - CBM_DATA01 envoie → /Incoming/data/parquet, /metadata, /status
     # - Un service (WinSCP, robocopy, script, scheduled task…) synchronise
     #   tout vers E:\SFTP_Mirroring sur le serveur S918.

@@ -51,17 +51,17 @@ def run_dbt_models(models: str = "prep.*"):
         )
         
         if result.stdout:
-            logger.info(f"📄 dbt output:\n{result.stdout}")
+            logger.info(f"[FILE] dbt output:\n{result.stdout}")
         
         if result.stderr:
-            logger.warning(f"⚠️ dbt warnings:\n{result.stderr}")
+            logger.warning(f"[WARN] dbt warnings:\n{result.stderr}")
         
         if result.returncode != 0:
             raise Exception(f"dbt run failed (code {result.returncode})")
         
         # Compter modèles créés
         models_count = result.stdout.count('OK created') if result.stdout else 0
-        logger.info(f"✅ {models_count} modèle(s) dbt créé(s)")
+        logger.info(f"[OK] {models_count} modèle(s) dbt créé(s)")
         
         return {
             'success': True, 
@@ -70,10 +70,10 @@ def run_dbt_models(models: str = "prep.*"):
         }
         
     except subprocess.TimeoutExpired:
-        logger.error("❌ dbt timeout (> 30 min)")
+        logger.error("[ERROR] dbt timeout (> 30 min)")
         raise
     except Exception as e:
-        logger.error(f"❌ Erreur dbt : {e}")
+        logger.error(f"[ERROR] Erreur dbt : {e}")
         raise
 
 
@@ -106,14 +106,14 @@ def run_dbt_tests(models: str = "prep.*"):
         )
         
         if result.stdout:
-            logger.info(f"📄 dbt test output:\n{result.stdout}")
+            logger.info(f"[FILE] dbt test output:\n{result.stdout}")
         
         tests_passed = result.returncode == 0
         
         if tests_passed:
-            logger.info("✅ Tous les tests dbt passés")
+            logger.info("[OK] Tous les tests dbt passés")
         else:
-            logger.warning("⚠️ Certains tests dbt échoués")
+            logger.warning("[WARN] Certains tests dbt échoués")
         
         return {
             'success': tests_passed,
@@ -121,11 +121,11 @@ def run_dbt_tests(models: str = "prep.*"):
         }
         
     except Exception as e:
-        logger.warning(f"⚠️ Erreur dbt test : {e}")
+        logger.warning(f"[WARN] Erreur dbt test : {e}")
         return {'success': False, 'error': str(e)}
 
 
-@flow(name="⚙️ ODS → PREP (dbt transformations)")
+@flow(name="[SETTINGS] ODS → PREP (dbt transformations)")
 def ods_to_prep_flow(
     models: str = "prep.*",
     run_tests: bool = False
@@ -146,7 +146,7 @@ def ods_to_prep_flow(
     """
     logger = get_run_logger()
     
-    logger.info(f"⚙️ Transformation dbt : {models}")
+    logger.info(f"[SETTINGS] Transformation dbt : {models}")
     
     # 1. dbt run
     run_result = run_dbt_models(models=models)
@@ -158,7 +158,7 @@ def ods_to_prep_flow(
         test_result = run_dbt_tests(models=models)
         tests_passed = test_result['success']
     
-    logger.info(f"✅ dbt terminé : {models_count} modèle(s)")
+    logger.info(f"[OK] dbt terminé : {models_count} modèle(s)")
     
     return {
         "models_count": models_count,

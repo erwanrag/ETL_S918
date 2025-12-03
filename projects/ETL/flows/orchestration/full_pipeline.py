@@ -23,7 +23,7 @@ from flows.ingestion.staging_to_ods import staging_to_ods_flow
 from flows.transformations.ods_to_prep import ods_to_prep_flow
 
 
-@flow(name="🚀 Pipeline ETL Complet v3 (Propagation)", log_prints=True)
+@flow(name="[START] Pipeline ETL Complet v3 (Propagation)", log_prints=True)
 def full_etl_pipeline(run_dbt: bool = False, import_metadata: bool = False):
     """
     Pipeline ETL complet avec propagation des tables traitées
@@ -43,7 +43,7 @@ def full_etl_pipeline(run_dbt: bool = False, import_metadata: bool = False):
     run_id = f"full_pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     logger.info("=" * 70)
-    logger.info("🚀 PIPELINE ETL COMPLET - VERSION 3.0 (PROPAGATION)")
+    logger.info("[START] PIPELINE ETL COMPLET - VERSION 3.0 (PROPAGATION)")
     logger.info(f"🆔 Run ID: {run_id}")
     logger.info("=" * 70)
     
@@ -68,12 +68,12 @@ def full_etl_pipeline(run_dbt: bool = False, import_metadata: bool = False):
             try:
                 db_metadata_import_flow()
                 results['metadata_imported'] = True
-                logger.info("✅ Metadata importés")
+                logger.info("[OK] Metadata importés")
             except Exception as e:
-                logger.warning(f"⚠️ Metadata skip : {e}")
+                logger.warning(f"[WARN] Metadata skip : {e}")
                 results['errors'].append(f"metadata: {str(e)}")
         else:
-            logger.info("⏭️ Phase 1 : Metadata ignorée (import_metadata=False)")
+            logger.info("[SKIP] Phase 1 : Metadata ignorée (import_metadata=False)")
         
         # ========================================
         # 2. SFTP → RAW (DÉTECTION)
@@ -85,27 +85,27 @@ def full_etl_pipeline(run_dbt: bool = False, import_metadata: bool = False):
         results['raw_tables'] = raw_result['tables_loaded']
         results['raw_rows'] = raw_result.get('total_rows', 0)
         
-        # ✅ RÉCUPÉRER LA LISTE DES TABLES TRAITÉES
+        # [OK] RÉCUPÉRER LA LISTE DES TABLES TRAITÉES
         tables_to_process = raw_result.get('tables', [])
         
         if raw_result['tables_loaded'] == 0:
-            logger.info("ℹ️ Aucune donnée SFTP à traiter")
+            logger.info("[INFO] Aucune donnée SFTP à traiter")
             logger.info("🛑 Arrêt du pipeline (rien à faire)")
             results['end_time'] = datetime.now().isoformat()
             results['duration_seconds'] = (datetime.now() - start_time).total_seconds()
             return results
         
-        logger.info(f"✅ RAW : {results['raw_tables']} table(s) chargée(s)")
-        logger.info(f"📋 Tables à traiter : {tables_to_process}")
+        logger.info(f"[OK] RAW : {results['raw_tables']} table(s) chargée(s)")
+        logger.info(f"[LIST] Tables à traiter : {tables_to_process}")
         
         # ========================================
         # 3. RAW → STAGING (UNIQUEMENT LES NOUVELLES TABLES)
         # ========================================
         logger.info("=" * 70)
-        logger.info("📋 Phase 3 : RAW → STAGING_ETL (Hashdiff + Enrichissement)")
-        logger.info(f"🎯 Traitement de {len(tables_to_process)} table(s) : {tables_to_process}")
+        logger.info("[LIST] Phase 3 : RAW → STAGING_ETL (Hashdiff + Enrichissement)")
+        logger.info(f"[TARGET] Traitement de {len(tables_to_process)} table(s) : {tables_to_process}")
         
-        # ✅ PASSER LA LISTE DES TABLES À TRAITER
+        # [OK] PASSER LA LISTE DES TABLES À TRAITER
         staging_result = raw_to_staging_flow(
             table_names=tables_to_process,  # ← NOUVELLE LOGIQUE
             run_id=run_id
@@ -113,16 +113,16 @@ def full_etl_pipeline(run_dbt: bool = False, import_metadata: bool = False):
         results['staging_tables'] = staging_result['tables_processed']
         results['staging_rows'] = staging_result.get('total_rows', 0)
         
-        logger.info(f"✅ STAGING : {results['staging_tables']} table(s), {results['staging_rows']:,} lignes")
+        logger.info(f"[OK] STAGING : {results['staging_tables']} table(s), {results['staging_rows']:,} lignes")
         
         # ========================================
         # 4. STAGING → ODS (UNIQUEMENT LES NOUVELLES TABLES)
         # ========================================
         logger.info("=" * 70)
-        logger.info("🔄 Phase 4 : STAGING_ETL → ODS (Merge intelligent)")
-        logger.info(f"🎯 Merge de {len(tables_to_process)} table(s) : {tables_to_process}")
+        logger.info("[SYNC] Phase 4 : STAGING_ETL → ODS (Merge intelligent)")
+        logger.info(f"[TARGET] Merge de {len(tables_to_process)} table(s) : {tables_to_process}")
         
-        # ✅ PASSER LA LISTE DES TABLES À MERGER
+        # [OK] PASSER LA LISTE DES TABLES À MERGER
         ods_result = staging_to_ods_flow(
             table_names=tables_to_process,  # ← NOUVELLE LOGIQUE
             run_id=run_id,
@@ -131,26 +131,26 @@ def full_etl_pipeline(run_dbt: bool = False, import_metadata: bool = False):
         results['ods_tables'] = ods_result['tables_merged']
         results['ods_rows_affected'] = ods_result.get('total_rows_affected', 0)
         
-        logger.info(f"✅ ODS : {results['ods_tables']} table(s), {results['ods_rows_affected']:,} lignes affectées")
+        logger.info(f"[OK] ODS : {results['ods_tables']} table(s), {results['ods_rows_affected']:,} lignes affectées")
         
         # ========================================
         # 5. ODS → PREP (dbt) - OPTIONNEL
         # ========================================
         if run_dbt:
             logger.info("=" * 70)
-            logger.info("⚙️ Phase 5 : ODS → PREP (dbt transformations)")
+            logger.info("[SETTINGS] Phase 5 : ODS → PREP (dbt transformations)")
             
             try:
                 dbt_result = ods_to_prep_flow(models="prep.*", run_tests=False)
                 results['dbt_models'] = dbt_result.get('models_count', 0)
                 results['dbt_tests_passed'] = dbt_result.get('tests_passed', None)
                 
-                logger.info(f"✅ dbt : {results['dbt_models']} modèle(s)")
+                logger.info(f"[OK] dbt : {results['dbt_models']} modèle(s)")
             except Exception as e:
-                logger.error(f"❌ Erreur dbt : {e}")
+                logger.error(f"[ERROR] Erreur dbt : {e}")
                 results['errors'].append(f"dbt: {str(e)}")
         else:
-            logger.info("⏭️ Phase 5 : dbt ignorée (run_dbt=False)")
+            logger.info("[SKIP] Phase 5 : dbt ignorée (run_dbt=False)")
         
         # ========================================
         # RÉSUMÉ FINAL
@@ -161,25 +161,25 @@ def full_etl_pipeline(run_dbt: bool = False, import_metadata: bool = False):
         results['success'] = len(results['errors']) == 0
         
         logger.info("=" * 70)
-        logger.info("✅ PIPELINE COMPLET TERMINÉ")
+        logger.info("[OK] PIPELINE COMPLET TERMINÉ")
         logger.info("=" * 70)
-        logger.info(f"⏱️  Durée totale : {results['duration_seconds']:.2f}s")
+        logger.info(f"[TIMER]  Durée totale : {results['duration_seconds']:.2f}s")
         logger.info(f"📥 RAW : {results['raw_tables']} table(s), {results['raw_rows']:,} lignes")
-        logger.info(f"📋 STAGING : {results['staging_tables']} table(s)")
-        logger.info(f"🔄 ODS : {results['ods_tables']} table(s), {results['ods_rows_affected']:,} lignes affectées")
+        logger.info(f"[LIST] STAGING : {results['staging_tables']} table(s)")
+        logger.info(f"[SYNC] ODS : {results['ods_tables']} table(s), {results['ods_rows_affected']:,} lignes affectées")
         
         if run_dbt:
-            logger.info(f"⚙️ dbt : {results['dbt_models']} modèle(s)")
+            logger.info(f"[SETTINGS] dbt : {results['dbt_models']} modèle(s)")
         
         if results['errors']:
-            logger.warning(f"⚠️ {len(results['errors'])} erreur(s) non bloquante(s)")
+            logger.warning(f"[WARN] {len(results['errors'])} erreur(s) non bloquante(s)")
         
         logger.info("=" * 70)
         
         return results
         
     except Exception as e:
-        logger.error(f"❌ ERREUR CRITIQUE PIPELINE : {e}")
+        logger.error(f"[ERROR] ERREUR CRITIQUE PIPELINE : {e}")
         results['end_time'] = datetime.now().isoformat()
         results['duration_seconds'] = (datetime.now() - start_time).total_seconds()
         results['success'] = False
@@ -206,16 +206,16 @@ def ingestion_pipeline_only():
     raw_result = sftp_to_raw_flow()
     
     if raw_result['tables_loaded'] == 0:
-        logger.info("ℹ️ Aucune donnée à traiter")
+        logger.info("[INFO] Aucune donnée à traiter")
         return
     
-    # ✅ Récupérer liste des tables chargées
+    # [OK] Récupérer liste des tables chargées
     tables_to_process = raw_result.get('tables', [])
-    logger.info(f"📋 Tables détectées : {tables_to_process}")
+    logger.info(f"[LIST] Tables détectées : {tables_to_process}")
     
     # 2. RAW → STAGING (uniquement tables chargées)
     logger.info("=" * 70)
-    logger.info("📋 Phase 2 : RAW → STAGING_ETL")
+    logger.info("[LIST] Phase 2 : RAW → STAGING_ETL")
     staging_result = raw_to_staging_flow(
         table_names=tables_to_process,
         run_id=run_id
@@ -223,15 +223,15 @@ def ingestion_pipeline_only():
     
     # 3. STAGING → ODS (uniquement tables chargées)
     logger.info("=" * 70)
-    logger.info("🔄 Phase 3 : STAGING_ETL → ODS")
+    logger.info("[SYNC] Phase 3 : STAGING_ETL → ODS")
     ods_result = staging_to_ods_flow(
         table_names=tables_to_process,
         run_id=run_id
     )
     
     logger.info("=" * 70)
-    logger.info("✅ PIPELINE INGESTION TERMINÉ")
-    logger.info(f"📊 {len(tables_to_process)} table(s) traitée(s)")
+    logger.info("[OK] PIPELINE INGESTION TERMINÉ")
+    logger.info(f"[DATA] {len(tables_to_process)} table(s) traitée(s)")
     logger.info("=" * 70)
 
 

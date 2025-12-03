@@ -59,15 +59,15 @@ def run_dbt_models(models: str = None):
         
         # Logger la sortie
         if result.stdout:
-            logger.info(f"📄 Output dbt:\n{result.stdout}")
+            logger.info(f"[FILE] Output dbt:\n{result.stdout}")
         
         if result.stderr:
-            logger.warning(f"⚠️ Warnings dbt:\n{result.stderr}")
+            logger.warning(f"[WARN] Warnings dbt:\n{result.stderr}")
         
         if result.returncode != 0:
             raise Exception(f"dbt run failed with return code {result.returncode}")
         
-        logger.info("✅ dbt run terminé avec succès")
+        logger.info("[OK] dbt run terminé avec succès")
         
         return {
             'success': True,
@@ -76,10 +76,10 @@ def run_dbt_models(models: str = None):
         }
         
     except subprocess.TimeoutExpired:
-        logger.error("❌ dbt run timeout (> 1 heure)")
+        logger.error("[ERROR] dbt run timeout (> 1 heure)")
         raise
     except Exception as e:
-        logger.error(f"❌ Erreur dbt run : {e}")
+        logger.error(f"[ERROR] Erreur dbt run : {e}")
         raise
 
 
@@ -113,16 +113,16 @@ def run_dbt_tests(models: str = None):
         )
         
         if result.stdout:
-            logger.info(f"📄 Output dbt test:\n{result.stdout}")
+            logger.info(f"[FILE] Output dbt test:\n{result.stdout}")
         
         if result.stderr:
-            logger.warning(f"⚠️ Warnings dbt test:\n{result.stderr}")
+            logger.warning(f"[WARN] Warnings dbt test:\n{result.stderr}")
         
         # Les tests peuvent échouer sans que ce soit une erreur critique
         if result.returncode != 0:
-            logger.warning(f"⚠️ Certains tests dbt ont échoué (code {result.returncode})")
+            logger.warning(f"[WARN] Certains tests dbt ont échoué (code {result.returncode})")
         else:
-            logger.info("✅ Tous les tests dbt sont passés")
+            logger.info("[OK] Tous les tests dbt sont passés")
         
         return {
             'success': result.returncode == 0,
@@ -131,12 +131,12 @@ def run_dbt_tests(models: str = None):
         }
         
     except Exception as e:
-        logger.error(f"❌ Erreur dbt test : {e}")
+        logger.error(f"[ERROR] Erreur dbt test : {e}")
         # On ne raise pas pour ne pas bloquer le flow
         return {'success': False, 'error': str(e)}
 
 
-@task(name="📊 Générer documentation dbt")
+@task(name="[DATA] Générer documentation dbt")
 def generate_dbt_docs():
     """Générer la documentation dbt"""
     logger = get_run_logger()
@@ -154,19 +154,19 @@ def generate_dbt_docs():
         )
         
         if result.returncode == 0:
-            logger.info("✅ Documentation dbt générée")
+            logger.info("[OK] Documentation dbt générée")
             logger.info(f"📚 Pour voir : dbt docs serve (dans {dbt_project_dir})")
         else:
-            logger.warning(f"⚠️ Erreur génération docs : {result.stderr}")
+            logger.warning(f"[WARN] Erreur génération docs : {result.stderr}")
         
         return result.returncode == 0
         
     except Exception as e:
-        logger.warning(f"⚠️ Impossible de générer la doc : {e}")
+        logger.warning(f"[WARN] Impossible de générer la doc : {e}")
         return False
 
 
-@task(name="📝 Logger transformation dans ETL logs")
+@task(name="[NOTE] Logger transformation dans ETL logs")
 def log_dbt_run(status: str, models_run: int = 0, tests_passed: bool = None, error_message: str = None):
     """Logger l'exécution dbt dans etl_logs.etl_run_log"""
     logger = get_run_logger()
@@ -191,13 +191,13 @@ def log_dbt_run(status: str, models_run: int = 0, tests_passed: bool = None, err
         cur.close()
         conn.close()
         
-        logger.info(f"📝 Exécution dbt loggée : {status}")
+        logger.info(f"[NOTE] Exécution dbt loggée : {status}")
         
     except Exception as e:
-        logger.warning(f"⚠️ Erreur log ETL : {e}")
+        logger.warning(f"[WARN] Erreur log ETL : {e}")
 
 
-@task(name="📈 Mettre à jour métadonnées tables")
+@task(name="[STATS] Mettre à jour métadonnées tables")
 def update_table_metadata():
     """Mettre à jour les métadonnées des tables dans etl_logs.etl_table_metadata"""
     logger = get_run_logger()
@@ -235,7 +235,7 @@ def update_table_metadata():
         conn.commit()
         rows_updated = cur.rowcount
         
-        logger.info(f"📊 {rows_updated} table(s) metadata mise(s) à jour")
+        logger.info(f"[DATA] {rows_updated} table(s) metadata mise(s) à jour")
         
         cur.close()
         conn.close()
@@ -243,7 +243,7 @@ def update_table_metadata():
         return rows_updated
         
     except Exception as e:
-        logger.warning(f"⚠️ Erreur mise à jour metadata : {e}")
+        logger.warning(f"[WARN] Erreur mise à jour metadata : {e}")
         if conn:
             conn.rollback()
             conn.close()
@@ -254,7 +254,7 @@ def update_table_metadata():
 # FLOW PRINCIPAL
 # ============================================================================
 
-@flow(name="⚙️ Transformation dbt (RAW → ODS)", log_prints=True)
+@flow(name="[SETTINGS] Transformation dbt (RAW → ODS)", log_prints=True)
 def dbt_transformation_flow(models: str = None, run_tests: bool = True, generate_docs: bool = False):
     """
     Flow principal de transformation dbt
@@ -273,7 +273,7 @@ def dbt_transformation_flow(models: str = None, run_tests: bool = True, generate
     logger = get_run_logger()
     
     logger.info("=" * 60)
-    logger.info("🚀 Démarrage transformation dbt")
+    logger.info("[START] Démarrage transformation dbt")
     logger.info("=" * 60)
     
     error_occurred = False
@@ -285,7 +285,7 @@ def dbt_transformation_flow(models: str = None, run_tests: bool = True, generate
         
         # Compter les modèles exécutés (parsing du output dbt)
         models_count = run_result['stdout'].count('OK created') if run_result['stdout'] else 0
-        logger.info(f"✅ {models_count} modèle(s) dbt exécuté(s)")
+        logger.info(f"[OK] {models_count} modèle(s) dbt exécuté(s)")
         
         # 2. Exécuter dbt test (si demandé)
         tests_passed = None
@@ -295,14 +295,14 @@ def dbt_transformation_flow(models: str = None, run_tests: bool = True, generate
             tests_passed = test_result['success']
             
             if tests_passed:
-                logger.info("✅ Tous les tests passés")
+                logger.info("[OK] Tous les tests passés")
             else:
-                logger.warning("⚠️ Certains tests ont échoué")
+                logger.warning("[WARN] Certains tests ont échoué")
         else:
-            logger.info("⏭️ Étape 2/4 : Tests ignorés")
+            logger.info("[SKIP] Étape 2/4 : Tests ignorés")
         
         # 3. Mettre à jour les métadonnées
-        logger.info("📊 Étape 3/4 : Mise à jour métadonnées")
+        logger.info("[DATA] Étape 3/4 : Mise à jour métadonnées")
         tables_updated = update_table_metadata()
         
         # 4. Générer la documentation (si demandé)
@@ -310,14 +310,14 @@ def dbt_transformation_flow(models: str = None, run_tests: bool = True, generate
             logger.info("📚 Étape 4/4 : Génération documentation")
             generate_dbt_docs()
         else:
-            logger.info("⏭️ Étape 4/4 : Documentation ignorée")
+            logger.info("[SKIP] Étape 4/4 : Documentation ignorée")
         
         # Logger l'exécution
         status = "SUCCESS" if not error_occurred else "FAILED"
         log_dbt_run(status, models_count, tests_passed)
         
         logger.info("=" * 60)
-        logger.info(f"✅ Transformation terminée : {models_count} modèle(s), {tables_updated} table(s) metadata")
+        logger.info(f"[OK] Transformation terminée : {models_count} modèle(s), {tables_updated} table(s) metadata")
         logger.info("=" * 60)
         
         return {
@@ -327,7 +327,7 @@ def dbt_transformation_flow(models: str = None, run_tests: bool = True, generate
         }
         
     except Exception as e:
-        logger.error(f"❌ Erreur flow dbt : {e}")
+        logger.error(f"[ERROR] Erreur flow dbt : {e}")
         log_dbt_run("FAILED", 0, None, str(e))
         raise
 
@@ -336,7 +336,7 @@ def dbt_transformation_flow(models: str = None, run_tests: bool = True, generate
 # FLOWS COMBINÉS
 # ============================================================================
 
-@flow(name="🔄 Pipeline Complet : SFTP → RAW → ODS", log_prints=True)
+@flow(name="[SYNC] Pipeline Complet : SFTP → RAW → ODS", log_prints=True)
 def full_etl_pipeline():
     """
     Pipeline ETL complet
@@ -347,7 +347,7 @@ def full_etl_pipeline():
     logger = get_run_logger()
     
     logger.info("=" * 60)
-    logger.info("🚀 PIPELINE ETL COMPLET")
+    logger.info("[START] PIPELINE ETL COMPLET")
     logger.info("=" * 60)
     
     # Import du flow d'ingestion
@@ -358,11 +358,11 @@ def full_etl_pipeline():
     sftp_to_raw_flow()
     
     # 2. Transformation
-    logger.info("⚙️ Phase 2 : Transformation dbt RAW → ODS")
+    logger.info("[SETTINGS] Phase 2 : Transformation dbt RAW → ODS")
     dbt_transformation_flow(run_tests=True, generate_docs=False)
     
     logger.info("=" * 60)
-    logger.info("✅ PIPELINE COMPLET TERMINÉ")
+    logger.info("[OK] PIPELINE COMPLET TERMINÉ")
     logger.info("=" * 60)
 
 

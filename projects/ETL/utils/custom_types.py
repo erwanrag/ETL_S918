@@ -40,7 +40,7 @@ def get_pg_type(progress_type: Optional[str],
     """
     Détermine le meilleur type PostgreSQL pour STAGING en fonction de metadata.
     
-    🔥 RÈGLE CRITIQUE : Si extent > 0, TOUJOURS retourner TEXT
+    [CRITICAL] RÈGLE CRITIQUE : Si extent > 0, TOUJOURS retourner TEXT
     Car Progress stocke les arrays comme "val1;val2;val3" en VARCHAR
     
     Args:
@@ -54,7 +54,7 @@ def get_pg_type(progress_type: Optional[str],
         Type PostgreSQL STAGING (str)
     """
     
-    # 🔥 RÈGLE #1 : EXTENT > 0 → TOUJOURS TEXT (multi-values)
+    # [CRITICAL] RÈGLE #1 : EXTENT > 0 → TOUJOURS TEXT (multi-values)
     if extent and extent > 0:
         return "TEXT"
 
@@ -65,15 +65,15 @@ def get_pg_type(progress_type: Optional[str],
     if data_type:
         data_type = data_type.lower().strip()
 
-    # 1️⃣ TYPE LOGICAL
+    # [1] TYPE LOGICAL
     if progress_type in ("logical", "bit"):
         return "BOOLEAN"
 
-    # 2️⃣ TYPE INTEGER
+    # [2] TYPE INTEGER
     if progress_type in ("integer", "int", "int64"):
         return "INTEGER"
 
-    # 3️⃣ TYPE NUMERIC
+    # [3] TYPE NUMERIC
     if progress_type in ("decimal", "numeric"):
         # On définit la précision NUMERIC(p,s) si width/scale existent
         if width and scale:
@@ -82,11 +82,11 @@ def get_pg_type(progress_type: Optional[str],
             return f"NUMERIC({width})"
         return "NUMERIC"
 
-    # 4️⃣ TYPE DATE
+    # [4] TYPE DATE
     if progress_type == "date":
         return "DATE"
 
-    # 5️⃣ TYPE DATETIME
+    # [5] TYPE DATETIME
     if progress_type in ("datetime", "timestamp"):
         return "TIMESTAMP"
 
@@ -141,7 +141,7 @@ def build_column_definition(col: Dict) -> str:
         data_type=col.get("DataType"),
         width=col.get("Width"),
         scale=col.get("Scale"),
-        extent=extent  # 🔥 NOUVEAU : passer extent
+        extent=extent  # [CRITICAL] NOUVEAU : passer extent
     )
     return f'"{name}" {pg_type}'
 
