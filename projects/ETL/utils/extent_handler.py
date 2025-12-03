@@ -1,14 +1,27 @@
 """
 ============================================================================
-Module : Gestion des colonnes EXTENT (arrays Progress)
+Module : Gestion des colonnes EXTENT (arrays Progress) - VERSION AMÉLIORÉE
 ============================================================================
 SÉPARATEUR : Point-virgule (;)
 IMPORTANT : Progress stocke les noms de tables en MAJUSCULES
+
+AMÉLIORATIONS :
+✅ Typage intelligent des colonnes éclatées (pas tout en TEXT)
+✅ Génération des commentaires SQL depuis Label
+✅ Gestion NULL pour valeurs vides et "?"
+✅ Support CREATE TABLE avec types corrects
+
+TYPAGE :
+- ProgressType=character → VARCHAR(Width)
+- ProgressType=decimal → NUMERIC(Width, Scale)
+- ProgressType=integer → INTEGER
+- ProgressType=date → DATE
+- ProgressType=logical → BOOLEAN
 ============================================================================
 """
 
 import psycopg2
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import sys
 from pathlib import Path
 
@@ -16,17 +29,68 @@ sys.path.append(str(Path(__file__).parent.parent))
 from flows.config.pg_config import config
 
 
-def get_extent_columns_for_table(table_name: str) -> Dict[str, int]:
+def get_extent_columns_with_metadata(table_name: str) -> Dict[str, Dict]:
     """
-    Récupérer colonnes avec extent > 0
+    Récupérer colonnes extent avec métadonnées complètes
     
-    IMPORTANT : Progress stocke les noms en MAJUSCULES
+    Returns:
+        Dict[column_name, {
+            'extent': int,
+            'progress_type': str,
+            'data_type': str,
+            'width': int,
+            'scale': int,
+            'label': str,
+            'description': str
+        }]
     """
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
     
     try:
-        # ✅ CORRECTION : Chercher en MAJUSCULES
+        cur.execute("""
+            SELECT 
+                "ColumnName",
+                "Extent",
+                "ProgressType",
+                "DataType",
+                "Width",
+                "Scale",
+                "Label",
+                "Description"
+            FROM metadata.proginovcolumns
+            WHERE UPPER("TableName") = UPPER(%s)
+              AND "Extent" > 0
+            ORDER BY "ColumnName"
+        """, (table_name,))
+        
+        result = {}
+        for row in cur.fetchall():
+            result[row[0]] = {
+                'extent': row[1],
+                'progress_type': (row[2] or '').lower(),
+                'data_type': (row[3] or '').lower(),
+                'width': row[4] or 0,
+                'scale': row[5] or 0,
+                'label': row[6] or '',
+                'description': row[7] or ''
+            }
+        
+        return result
+        
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_extent_columns_for_table(table_name: str) -> Dict[str, int]:
+    """
+    Récupérer colonnes avec extent > 0 (version simple, rétrocompatibilité)
+    """
+    conn = psycopg2.connect(config.get_connection_string())
+    cur = conn.cursor()
+    
+    try:
         cur.execute("""
             SELECT "ColumnName", "Extent"
             FROM metadata.proginovcolumns
@@ -39,6 +103,74 @@ def get_extent_columns_for_table(table_name: str) -> Dict[str, int]:
     finally:
         cur.close()
         conn.close()
+
+
+def get_pg_type_for_extent_column(progress_type: str, data_type: str, width: int, scale: int) -> str:
+    """
+    Déterminer le type PostgreSQL pour une colonne extent éclatée
+    
+    Args:
+        progress_type: Type Progress (character, decimal, integer, date, logical)
+        data_type: Type de données
+        width: Largeur
+        scale: Décimales
+    
+    Returns:
+        str: Type PostgreSQL (VARCHAR(n), NUMERIC(p,s), INTEGER, DATE, BOOLEAN)
+    
+    Examples:
+        >>> get_pg_type_for_extent_column('character', 'varchar', 31000, 0)
+        'VARCHAR(255)'
+        
+        >>> get_pg_type_for_extent_column('decimal', 'numeric', 17, 2)
+        'NUMERIC(17,2)'
+        
+        >>> get_pg_type_for_extent_column('integer', 'integer', 4, 0)
+        'INTEGER'
+    """
+    pt = progress_type.lower()
+    dt = data_type.lower()
+    
+    # ============================================================
+    # CHARACTER → VARCHAR
+    # ============================================================
+    if pt == 'character' or dt == 'varchar':
+        # Limiter à 255 pour éviter les colonnes trop larges
+        actual_width = min(width, 255) if width > 0 else 255
+        return f'VARCHAR({actual_width})'
+    
+    # ============================================================
+    # DECIMAL/NUMERIC → NUMERIC
+    # ============================================================
+    elif pt in ('decimal', 'numeric') or dt in ('decimal', 'numeric'):
+        if scale and scale > 0:
+            return f'NUMERIC({width},{scale})'
+        else:
+            return f'NUMERIC({width},0)'
+    
+    # ============================================================
+    # INTEGER → INTEGER
+    # ============================================================
+    elif pt in ('integer', 'int', 'int64') or dt in ('integer', 'int'):
+        return 'INTEGER'
+    
+    # ============================================================
+    # DATE → DATE
+    # ============================================================
+    elif pt == 'date' or dt == 'date':
+        return 'DATE'
+    
+    # ============================================================
+    # LOGICAL → BOOLEAN
+    # ============================================================
+    elif pt in ('logical', 'bit') or dt in ('logical', 'bit'):
+        return 'BOOLEAN'
+    
+    # ============================================================
+    # FALLBACK → TEXT
+    # ============================================================
+    else:
+        return 'TEXT'
 
 
 def generate_extent_columns(column_name: str, extent: int) -> List[str]:
@@ -57,47 +189,152 @@ def get_extent_mapping(table_name: str) -> Dict[str, List[str]]:
     return mapping
 
 
+def build_ods_select_with_extent_typed(
+    table_name: str,
+    staging_columns: List[str]
+) -> Tuple[str, List[str], Dict[str, str]]:
+    """
+    🆕 VERSION AMÉLIORÉE : Construire SELECT avec typage ET cast intelligent
+    
+    SÉPARATEUR : Point-virgule (;)
+    
+    Returns:
+        Tuple[
+            select_clause: str,  # Clause SELECT avec CAST
+            ods_columns: List[str],  # Liste des colonnes ODS
+            column_types: Dict[str, str]  # Mapping colonne → type PG
+        ]
+    
+    Exemple :
+        zal (character, Extent=5) →
+            NULLIF(TRIM(split_part("zal", ';', 1)), '')::VARCHAR(35) AS zal_1,
+            NULLIF(TRIM(split_part("zal", ';', 2)), '')::VARCHAR(35) AS zal_2,
+            ...
+        
+        znu (decimal, Extent=5, Width=16, Scale=4) →
+            NULLIF(split_part("znu", ';', 1), '')::NUMERIC(16,4) AS znu_1,
+            NULLIF(split_part("znu", ';', 2), '')::NUMERIC(16,4) AS znu_2,
+            ...
+    """
+    extent_metadata = get_extent_columns_with_metadata(table_name)
+    
+    select_parts = []
+    ods_columns = []
+    column_types = {}
+    
+    for col in staging_columns:
+        # ============================================================
+        # COLONNE EXTENT : Éclater avec typage intelligent
+        # ============================================================
+        if col in extent_metadata:
+            meta = extent_metadata[col]
+            extent = meta['extent']
+            pg_type = get_pg_type_for_extent_column(
+                meta['progress_type'],
+                meta['data_type'],
+                meta['width'],
+                meta['scale']
+            )
+            
+            for i in range(1, extent + 1):
+                expanded_col = f"{col}_{i}"
+                
+                # Gestion NULL pour valeurs vides et "?"
+                if pg_type.startswith('VARCHAR'):
+                    # VARCHAR : NULLIF pour vider et "?"
+                    expr = f"""NULLIF(NULLIF(TRIM(split_part("{col}", ';', {i})), ''), '?')::{pg_type}"""
+                elif pg_type.startswith('NUMERIC') or pg_type == 'INTEGER':
+                    # NUMERIC/INTEGER : NULLIF + gestion erreurs
+                    expr = f"""CASE 
+                        WHEN split_part("{col}", ';', {i}) IN ('', '?', '0') THEN NULL
+                        ELSE split_part("{col}", ';', {i})::{pg_type}
+                    END"""
+                elif pg_type == 'DATE':
+                    # DATE : NULLIF + gestion format
+                    expr = f"""CASE 
+                        WHEN split_part("{col}", ';', {i}) IN ('', '?', '00/00/00') THEN NULL
+                        ELSE split_part("{col}", ';', {i})::DATE
+                    END"""
+                elif pg_type == 'BOOLEAN':
+                    # BOOLEAN : Conversion intelligente
+                    expr = f"""CASE 
+                        WHEN split_part("{col}", ';', {i}) = 'yes' THEN TRUE
+                        WHEN split_part("{col}", ';', {i}) = 'no' THEN FALSE
+                        ELSE NULL
+                    END"""
+                else:
+                    # TEXT : Simple split
+                    expr = f"""split_part("{col}", ';', {i})"""
+                
+                select_parts.append(f"{expr} AS {expanded_col}")
+                ods_columns.append(expanded_col)
+                column_types[expanded_col] = pg_type
+        
+        # ============================================================
+        # COLONNE NORMALE : Passer telle quelle
+        # ============================================================
+        else:
+            select_parts.append(f'"{col}"')
+            ods_columns.append(col)
+            # Type non défini pour colonnes normales (déjà typées dans STAGING)
+    
+    select_clause = ',\n            '.join(select_parts)
+    
+    return select_clause, ods_columns, column_types
+
+
 def build_ods_select_with_extent(
     table_name: str,
     staging_columns: List[str]
 ) -> Tuple[str, List[str]]:
     """
-    Construire SELECT pour ODS avec éclatement extent
+    VERSION COMPATIBILITÉ : Construire SELECT sans typage (comme avant)
     
-    SÉPARATEUR : Point-virgule (;)
-    
-    Exemple données Progress : zal = "AAA;;;;"
-    Résultat :
-        zal_1 = "AAA"
-        zal_2 = ""
-        zal_3 = ""
-        zal_4 = ""
-        zal_5 = ""
+    Pour rétrocompatibilité avec code existant
     """
-    extent_mapping = get_extent_columns_for_table(table_name)
-    
-    select_parts = []
-    ods_columns = []
-    
-    for col in staging_columns:
-        # Si colonne extent, l'éclater
-        if col in extent_mapping:
-            extent = extent_mapping[col]
-            for i in range(1, extent + 1):
-                expanded_col = f"{col}_{i}"
-                # ✅ SÉPARATEUR : Point-virgule (;)
-                select_parts.append(
-                    f"split_part(\"{col}\", ';', {i}) AS {expanded_col}"
-                )
-                ods_columns.append(expanded_col)
-        else:
-            # Colonne normale (y compris _etl_*)
-            select_parts.append(f'"{col}"')
-            ods_columns.append(col)
-    
-    select_clause = ',\n            '.join(select_parts)
-    
+    select_clause, ods_columns, _ = build_ods_select_with_extent_typed(
+        table_name, staging_columns
+    )
     return select_clause, ods_columns
+
+
+def generate_column_comments(
+    table_name: str,
+    schema: str = 'ods'
+) -> List[str]:
+    """
+    🆕 Générer les commentaires SQL pour colonnes extent éclatées
+    
+    Args:
+        table_name: Nom de la table (ex: 'client')
+        schema: Schéma PostgreSQL (défaut: 'ods')
+    
+    Returns:
+        List[str]: Liste de commandes COMMENT ON COLUMN
+    
+    Example:
+        >>> comments = generate_column_comments('client')
+        >>> print(comments[0])
+        COMMENT ON COLUMN ods.client.zal_1 IS 'Libre caractère - Élément 1/5';
+    """
+    extent_metadata = get_extent_columns_with_metadata(table_name)
+    comments = []
+    
+    for col_name, meta in extent_metadata.items():
+        extent = meta['extent']
+        label = meta['label'].strip("'\"") if meta['label'] else f"Colonne {col_name}"
+        
+        # 🔥 ÉCHAPPER les quotes simples pour SQL
+        label = label.replace("'", "''")
+        
+        for i in range(1, extent + 1):
+            expanded_col = f"{col_name}_{i}"
+            comment_text = f"{label} - Élément {i}/{extent}"
+            
+            sql = f"COMMENT ON COLUMN {schema}.{table_name}.{expanded_col} IS '{comment_text}';"
+            comments.append(sql)
+    
+    return comments
 
 
 def has_extent_columns(table_name: str) -> bool:
@@ -122,7 +359,7 @@ def count_extent_expansion(table_name: str) -> Dict[str, int]:
     return {
         'extent_columns': len(extent_cols),
         'total_expanded': total_expanded,
-        'expansion_ratio': total_expanded / len(extent_cols)
+        'expansion_ratio': total_expanded / len(extent_cols) if len(extent_cols) > 0 else 0
     }
 
 
@@ -132,44 +369,44 @@ def count_extent_expansion(table_name: str) -> Dict[str, int]:
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("TEST EXTENT HANDLER")
+    print("TEST EXTENT HANDLER AMÉLIORÉ")
     print("=" * 70)
     
-    # Test 1: Colonnes extent pour client
-    print("\n1. Colonnes extent pour 'client':")
-    extent_cols = get_extent_columns_for_table('client')
-    if extent_cols:
-        for col, extent in list(extent_cols.items())[:5]:  # 5 premiers
-            expanded = generate_extent_columns(col, extent)
-            print(f"   {col}[{extent}] → {', '.join(expanded)}")
-        print(f"   ... et {len(extent_cols) - 5} autres colonnes")
-    else:
-        print("   ❌ Aucune colonne extent trouvée")
+    # Test 1: Métadonnées complètes
+    print("\n1. Métadonnées extent pour 'client' (5 premiers):")
+    extent_meta = get_extent_columns_with_metadata('client')
+    for i, (col, meta) in enumerate(list(extent_meta.items())[:5]):
+        pg_type = get_pg_type_for_extent_column(
+            meta['progress_type'],
+            meta['data_type'],
+            meta['width'],
+            meta['scale']
+        )
+        print(f"   {col}[{meta['extent']}] → {pg_type}")
+        print(f"      Label: {meta['label']}")
     
-    # Test 2: Statistiques
-    print("\n2. Statistiques expansion pour 'client':")
-    stats = count_extent_expansion('client')
-    print(f"   Colonnes extent: {stats['extent_columns']}")
-    print(f"   Total éclaté: {stats['total_expanded']}")
-    if stats['extent_columns'] > 0:
-        print(f"   Ratio moyen: {stats['expansion_ratio']:.1f}")
-    
-    # Test 3: Vérifier présence
-    print("\n3. Vérification présence extent:")
-    for table in ['client', 'produit', 'stock']:
-        has_extent = has_extent_columns(table)
-        extent_count = len(get_extent_columns_for_table(table))
-        status = f"✅ {extent_count} colonne(s)" if has_extent else "❌ AUCUNE"
-        print(f"   {table}: {status}")
-    
-    # Test 4: SELECT
-    print("\n4. Test SELECT avec extent:")
-    staging_cols = ['cod_cli', 'nom_cli', 'zal', 'commerc', '_etl_hashdiff']
-    select_clause, ods_cols = build_ods_select_with_extent('client', staging_cols)
+    # Test 2: SELECT typé
+    print("\n2. Test SELECT avec typage:")
+    staging_cols = ['cod_cli', 'nom_cli', 'zal', 'znu', '_etl_hashdiff']
+    select_clause, ods_cols, col_types = build_ods_select_with_extent_typed('client', staging_cols)
     print(f"   Staging: {len(staging_cols)} colonnes")
     print(f"   ODS: {len(ods_cols)} colonnes")
-    print(f"\n   Exemple SELECT (200 premiers chars):")
-    print(f"   {select_clause[:200]}...")
+    print(f"\n   Types générés:")
+    for col, typ in list(col_types.items())[:5]:
+        print(f"      {col}: {typ}")
+    
+    # Test 3: Commentaires SQL
+    print("\n3. Commentaires SQL (3 premiers):")
+    comments = generate_column_comments('client')
+    for comment in comments[:3]:
+        print(f"   {comment}")
+    
+    # Test 4: Statistiques
+    print("\n4. Statistiques expansion:")
+    for table in ['client', 'produit', 'clcondi']:
+        stats = count_extent_expansion(table)
+        if stats['extent_columns'] > 0:
+            print(f"   {table}: {stats['extent_columns']} cols → {stats['total_expanded']} cols éclatées (ratio: {stats['expansion_ratio']:.1f})")
     
     print("\n" + "=" * 70)
     print("TESTS TERMINÉS")

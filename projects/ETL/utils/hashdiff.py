@@ -48,25 +48,30 @@ def calculate_hashdiff_pandas(df: pd.DataFrame, columns: List[str]) -> pd.Series
 def calculate_hashdiff_sql(table_name: str, schema: str, run_id: Optional[str] = None) -> str:
     """
     Générer SQL pour calculer hashdiff en base PostgreSQL
-    
-    Args:
-        table_name: Nom de la table
-        schema: Schéma (staging, ods)
-        run_id: UUID du run (optionnel, pour filtrer)
-    
-    Returns:
-        str: Requête SQL UPDATE
+    Gestion limite 100 arguments PostgreSQL via chunks
     """
     from utils.metadata_helper import get_business_columns
     
     # Récupérer colonnes métier
     business_cols = get_business_columns(table_name)
     
-    # Générer CONCAT_WS pour hashdiff
-    concat_parts = [f"COALESCE(\"{col}\"::TEXT, '')" for col in business_cols]
-    concat_expr = f"CONCAT_WS('|', {', '.join(concat_parts)})"
+    # Gérer limite 100 arguments PostgreSQL
+    if len(business_cols) <= 95:
+        # Méthode simple
+        concat_parts = [f"COALESCE(\"{col}\"::TEXT, '')" for col in business_cols]
+        concat_expr = f"CONCAT_WS('|', {', '.join(concat_parts)})"
+    else:
+        # Méthode par chunks
+        chunk_size = 95
+        chunks = []
+        for i in range(0, len(business_cols), chunk_size):
+            chunk_cols = business_cols[i:i+chunk_size]
+            concat_parts = [f"COALESCE(\"{col}\"::TEXT, '')" for col in chunk_cols]
+            chunks.append(f"CONCAT_WS('|', {', '.join(concat_parts)})")
+        
+        concat_expr = " || '|' || ".join(chunks)
     
-    # SQL UPDATE
+    # SQL UPDATE avec SHA256
     sql = f"""
         UPDATE {schema}.{table_name}
         SET _etl_hashdiff = ENCODE(
@@ -75,12 +80,10 @@ def calculate_hashdiff_sql(table_name: str, schema: str, run_id: Optional[str] =
         )
     """
     
-    # Ajouter filtre run_id si fourni
     if run_id:
         sql += f"\n        WHERE _etl_run_id = '{run_id}'"
     
     return sql
-
 
 def execute_hashdiff_update(table_name: str, schema: str, run_id: Optional[str] = None):
     """

@@ -35,19 +35,28 @@ POSTGRES_TYPE_MAP = {
 def get_pg_type(progress_type: Optional[str],
                 data_type: Optional[str],
                 width: Optional[int],
-                scale: Optional[int]) -> str:
+                scale: Optional[int],
+                extent: Optional[int] = 0) -> str:
     """
     Détermine le meilleur type PostgreSQL pour STAGING en fonction de metadata.
-
+    
+    🔥 RÈGLE CRITIQUE : Si extent > 0, TOUJOURS retourner TEXT
+    Car Progress stocke les arrays comme "val1;val2;val3" en VARCHAR
+    
     Args:
         progress_type: metadata.proginovcolumns.ProgressType
         data_type: metadata.proginovcolumns.DataType (varchar, integer…)
         width: Taille du champ Progress (peu utile pour PostgreSQL)
         scale: précision des décimaux pour NUMERIC
+        extent: Extent > 0 indique un array Progress → VARCHAR multi-values
 
     Returns:
         Type PostgreSQL STAGING (str)
     """
+    
+    # 🔥 RÈGLE #1 : EXTENT > 0 → TOUJOURS TEXT (multi-values)
+    if extent and extent > 0:
+        return "TEXT"
 
     # Sécurité
     if progress_type:
@@ -113,6 +122,7 @@ def build_column_definition(col: Dict) -> str:
                "Width": 31000,
                "Scale": "0",
                "ProgressType": "character",
+               "Extent": 0,
                ...
              }
 
@@ -120,11 +130,18 @@ def build_column_definition(col: Dict) -> str:
         '"nom_cli" TEXT' ou '"statut" INTEGER' etc.
     """
     name = col["ColumnName"]
+    
+    # Récupérer Extent depuis metadata
+    extent = col.get("Extent", 0)
+    if extent is None:
+        extent = 0
+    
     pg_type = get_pg_type(
         progress_type=col.get("ProgressType"),
         data_type=col.get("DataType"),
         width=col.get("Width"),
         scale=col.get("Scale"),
+        extent=extent  # 🔥 NOUVEAU : passer extent
     )
     return f'"{name}" {pg_type}'
 

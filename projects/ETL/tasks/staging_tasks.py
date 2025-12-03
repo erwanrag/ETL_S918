@@ -30,6 +30,7 @@ from utils.types import build_table_columns_sql
 def create_staging_table(table_name: str):
     """
     Crée staging_etl.stg_{table} à partir de metadata.proginovcolumns
+    Les colonnes avec Extent > 0 sont automatiquement en TEXT (géré par types.py)
     """
     logger = get_run_logger()
     conn = psycopg2.connect(config.get_connection_string())
@@ -45,7 +46,7 @@ def create_staging_table(table_name: str):
             logger.error(f"❌ Aucune metadata trouvée pour {base}")
             return
 
-        # Colonnes typées
+        # Colonnes typées (types.py gère automatiquement Extent → TEXT)
         columns_sql = build_table_columns_sql(cols_meta)
 
         # Colonnes ETL
@@ -82,7 +83,6 @@ def create_staging_table(table_name: str):
         conn.close()
 
 
-
 # ============================================================================
 # INSERT RAW → STAGING
 # ============================================================================
@@ -91,9 +91,14 @@ def create_staging_table(table_name: str):
 def load_raw_to_staging(table_name: str, run_id: str):
     """
     Insert des données depuis raw.raw_{table} vers staging_etl.stg_{table}
+    
+    IMPORTANT : Gestion intelligente des colonnes Extent
+    - Extent > 0 : garde en TEXT (multi-values "val1;val2;val3")
+    - Extent = 0 : cast selon ProgressType
+    
     Nettoyage :
       - TRIM sur les chaînes
-      - CAST typés selon metadata
+      - CAST typés selon metadata + Extent
       - Gestion NULL
     Génère :
       - _etl_hashdiff
@@ -131,6 +136,17 @@ def load_raw_to_staging(table_name: str, run_id: str):
             logger.error(f"❌ Aucune colonne business pour {base}")
             return
 
+        # Debug : afficher colonnes Extent
+        extent_count = 0
+        for col, meta in cols_meta.items():
+            extent = meta.get("Extent", 0) or 0
+            if extent > 0:
+                extent_count += 1
+                logger.info(f"  🔀 {col}: Extent={extent}, ProgressType={meta.get('ProgressType')}")
+        
+        if extent_count > 0:
+            logger.info(f"📊 {extent_count} colonne(s) avec Extent détectée(s)")
+
         # ===================================================================
         # Construire SELECT typé & nettoyé
         # ===================================================================
@@ -139,13 +155,14 @@ def load_raw_to_staging(table_name: str, run_id: str):
         for col, info in cols_meta.items():
             pt = (info.get("ProgressType") or "").lower()
             dt = (info.get("DataType") or "").lower()
+            extent = info.get("Extent", 0) or 0  # 🔥 RÉCUPÉRER EXTENT
 
-            source = f"\"{col}\""
+            source = f'"{col}"'
 
             # -----------------------
-            # BOOLEAN
+            # BOOLEAN (seulement si Extent = 0)
             # -----------------------
-            if pt in ("logical", "bit"):
+            if pt in ("logical", "bit") and extent == 0:
                 expr = f"""
 CASE 
     WHEN UPPER(BTRIM({source}::text)) IN ('1','Y','YES','TRUE','OUI') THEN TRUE
@@ -155,26 +172,26 @@ END AS "{col}"
                 """.strip()
 
             # -----------------------
-            # INTEGER
+            # INTEGER (seulement si Extent = 0)
             # -----------------------
-            elif pt in ("integer", "int", "int64") or dt in ("integer", "int"):
+            elif (pt in ("integer", "int", "int64") or dt in ("integer", "int")) and extent == 0:
                 expr = f"NULLIF(BTRIM({source}::text), '')::INTEGER AS \"{col}\""
 
             # -----------------------
-            # NUMERIC
+            # NUMERIC (seulement si Extent = 0)
             # -----------------------
-            elif pt in ("decimal", "numeric") or dt in ("decimal", "numeric"):
+            elif (pt in ("decimal", "numeric") or dt in ("decimal", "numeric")) and extent == 0:
                 expr = f"NULLIF(BTRIM({source}::text), '')::NUMERIC AS \"{col}\""
 
             # -----------------------
-            # DATE
+            # DATE (seulement si Extent = 0)
             # -----------------------
-            elif pt == "date" or dt == "date":
+            elif (pt == "date" or dt == "date") and extent == 0:
                 expr = f"""
-CASE 
-    WHEN {source} IN ('', '00/00/00', '00-00-00') THEN NULL
-    ELSE NULLIF(BTRIM({source}::text), '')::DATE
-END AS "{col}"
+            CASE 
+                WHEN {source} IN ('', '00/00/00', '00-00-00') THEN NULL
+                ELSE NULLIF(BTRIM({source}::text), '')::DATE
+            END AS "{col}"
                 """.strip()
 
             # -----------------------
@@ -184,13 +201,13 @@ END AS "{col}"
                 expr = f"NULLIF(BTRIM({source}::text), '')::TIMESTAMP AS \"{col}\""
 
             # -----------------------
-            # TEXT / CHARACTER
+            # TEXT / CHARACTER (ou Extent > 0)
             # -----------------------
             elif pt == "character" or dt in ("varchar", "character", "text"):
                 expr = f"NULLIF(BTRIM({source}::text), '') AS \"{col}\""
 
             # -----------------------
-            # FALLBACK = TEXT
+            # FALLBACK = TEXT (y compris colonnes Extent)
             # -----------------------
             else:
                 expr = f"NULLIF(BTRIM({source}::text), '') AS \"{col}\""
@@ -198,10 +215,28 @@ END AS "{col}"
             select_exprs.append(expr)
 
         # ===================================================================
-        # HASHDIFF
+        # HASHDIFF (avec gestion limite 100 arguments PostgreSQL)
         # ===================================================================
-        hash_concat = ", ".join([f"COALESCE(\"{c}\"::text, '')" for c in business_cols])
-        hash_expr = f"MD5(CONCAT_WS('|', {hash_concat})) AS _etl_hashdiff"
+        # PostgreSQL limite CONCAT_WS à 100 arguments
+        # Si plus de 95 colonnes, on concatène par chunks puis on hash le résultat
+        if len(business_cols) <= 95:
+            # Méthode simple : tout en un coup
+            hash_concat = ", ".join([f"COALESCE(\"{c}\"::text, '')" for c in business_cols])
+            hash_expr = f"MD5(CONCAT_WS('|', {hash_concat})) AS _etl_hashdiff"
+        else:
+            # Méthode par chunks de 95 colonnes
+            chunk_size = 95
+            chunks = []
+            for i in range(0, len(business_cols), chunk_size):
+                chunk_cols = business_cols[i:i+chunk_size]
+                chunk_concat = ", ".join([f"COALESCE(\"{c}\"::text, '')" for c in chunk_cols])
+                chunks.append(f"CONCAT_WS('|', {chunk_concat})")
+            
+            # Concaténer les chunks puis hasher
+            all_chunks = " || '|' || ".join(chunks)
+            hash_expr = f"MD5({all_chunks}) AS _etl_hashdiff"
+            
+            logger.info(f"⚠️ Table large : {len(business_cols)} colonnes → {len(chunks)} chunks pour hashdiff")
 
         # ===================================================================
         # SELECT complet
