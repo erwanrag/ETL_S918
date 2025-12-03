@@ -109,68 +109,78 @@ def get_pg_type_for_extent_column(progress_type: str, data_type: str, width: int
     """
     Déterminer le type PostgreSQL pour une colonne extent éclatée
     
+    IMPORTANT : Pour les colonnes extent, Progress stocke TOUJOURS en VARCHAR
+    mais ProgressType indique le vrai type sémantique !
+    
     Args:
         progress_type: Type Progress (character, decimal, integer, date, logical)
-        data_type: Type de données
+        data_type: Type de données (toujours varchar pour extent)
         width: Largeur
         scale: Décimales
     
     Returns:
         str: Type PostgreSQL (VARCHAR(n), NUMERIC(p,s), INTEGER, DATE, BOOLEAN)
-    
-    Examples:
-        >>> get_pg_type_for_extent_column('character', 'varchar', 31000, 0)
-        'VARCHAR(255)'
-        
-        >>> get_pg_type_for_extent_column('decimal', 'numeric', 17, 2)
-        'NUMERIC(17,2)'
-        
-        >>> get_pg_type_for_extent_column('integer', 'integer', 4, 0)
-        'INTEGER'
     """
     pt = progress_type.lower()
-    dt = data_type.lower()
+    
+    # ⚠️ CRITICAL: Convertir width et scale en int (peuvent être string depuis DB)
+    try:
+        width = int(width) if width else 0
+    except (ValueError, TypeError):
+        width = 0
+    
+    try:
+        scale = int(scale) if scale else 0
+    except (ValueError, TypeError):
+        scale = 0
     
     # ============================================================
-    # CHARACTER → VARCHAR
+    # PRIORITÉ 1 : ProgressType (type sémantique)
     # ============================================================
-    if pt == 'character' or dt == 'varchar':
-        # Limiter à 255 pour éviter les colonnes trop larges
-        actual_width = min(width, 255) if width > 0 else 255
-        return f'VARCHAR({actual_width})'
     
-    # ============================================================
     # DECIMAL/NUMERIC → NUMERIC
-    # ============================================================
-    elif pt in ('decimal', 'numeric') or dt in ('decimal', 'numeric'):
+    if pt in ('decimal', 'numeric'):
         if scale and scale > 0:
             return f'NUMERIC({width},{scale})'
         else:
             return f'NUMERIC({width},0)'
     
-    # ============================================================
     # INTEGER → INTEGER
-    # ============================================================
-    elif pt in ('integer', 'int', 'int64') or dt in ('integer', 'int'):
+    elif pt in ('integer', 'int', 'int64'):
         return 'INTEGER'
     
-    # ============================================================
     # DATE → DATE
-    # ============================================================
-    elif pt == 'date' or dt == 'date':
+    elif pt == 'date':
         return 'DATE'
     
-    # ============================================================
     # LOGICAL → BOOLEAN
-    # ============================================================
-    elif pt in ('logical', 'bit') or dt in ('logical', 'bit'):
+    elif pt in ('logical', 'bit'):
         return 'BOOLEAN'
     
+    # CHARACTER → VARCHAR
+    elif pt == 'character':
+        # Limiter à 255 pour éviter les colonnes trop larges
+        actual_width = min(width, 255) if width > 0 else 255
+        return f'VARCHAR({actual_width})'
+    
     # ============================================================
-    # FALLBACK → TEXT
+    # FALLBACK : Si ProgressType inconnu, utiliser DataType
     # ============================================================
     else:
-        return 'TEXT'
+        dt = data_type.lower()
+        if dt in ('decimal', 'numeric'):
+            return f'NUMERIC({width},{scale})' if scale > 0 else f'NUMERIC({width},0)'
+        elif dt in ('integer', 'int'):
+            return 'INTEGER'
+        elif dt == 'date':
+            return 'DATE'
+        elif dt in ('logical', 'bit'):
+            return 'BOOLEAN'
+        elif dt == 'varchar':
+            actual_width = min(width, 255) if width > 0 else 255
+            return f'VARCHAR({actual_width})'
+        else:
+            return 'TEXT'
 
 
 def generate_extent_columns(column_name: str, extent: int) -> List[str]:
@@ -239,32 +249,42 @@ def build_ods_select_with_extent_typed(
             for i in range(1, extent + 1):
                 expanded_col = f"{col}_{i}"
                 
-                # Gestion NULL pour valeurs vides et "?"
+                # 🔥 GESTION NULL STRICTE : Toutes valeurs vides → NULL
                 if pg_type.startswith('VARCHAR'):
-                    # VARCHAR : NULLIF pour vider et "?"
-                    expr = f"""NULLIF(NULLIF(TRIM(split_part("{col}", ';', {i})), ''), '?')::{pg_type}"""
+                    # VARCHAR : NULLIF pour "", "?", espaces
+                    expr = f"""NULLIF(NULLIF(NULLIF(TRIM(split_part("{col}", ';', {i})), ''), '?'), ' ')::{pg_type}"""
+                    
                 elif pg_type.startswith('NUMERIC') or pg_type == 'INTEGER':
-                    # NUMERIC/INTEGER : NULLIF + gestion erreurs
+                    # NUMERIC/INTEGER : Conversion stricte avec gestion erreurs
                     expr = f"""CASE 
-                        WHEN split_part("{col}", ';', {i}) IN ('', '?', '0') THEN NULL
-                        ELSE split_part("{col}", ';', {i})::{pg_type}
-                    END"""
-                elif pg_type == 'DATE':
-                    # DATE : NULLIF + gestion format
-                    expr = f"""CASE 
-                        WHEN split_part("{col}", ';', {i}) IN ('', '?', '00/00/00') THEN NULL
-                        ELSE split_part("{col}", ';', {i})::DATE
-                    END"""
-                elif pg_type == 'BOOLEAN':
-                    # BOOLEAN : Conversion intelligente
-                    expr = f"""CASE 
-                        WHEN split_part("{col}", ';', {i}) = 'yes' THEN TRUE
-                        WHEN split_part("{col}", ';', {i}) = 'no' THEN FALSE
+                        WHEN TRIM(split_part("{col}", ';', {i})) IN ('', '?', ' ') THEN NULL
+                        WHEN TRIM(split_part("{col}", ';', {i})) ~ '^-?[0-9]+\.?[0-9]*$' THEN 
+                            NULLIF(TRIM(split_part("{col}", ';', {i})), '0')::{pg_type}
                         ELSE NULL
                     END"""
+                    
+                elif pg_type == 'DATE':
+                    # DATE : Conversion stricte avec validation format
+                    expr = f"""CASE 
+                        WHEN TRIM(split_part("{col}", ';', {i})) IN ('', '?', '00/00/00', '00-00-00', ' ') THEN NULL
+                        WHEN TRIM(split_part("{col}", ';', {i})) ~ '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{4}}$' THEN 
+                            TO_DATE(TRIM(split_part("{col}", ';', {i})), 'MM/DD/YYYY')
+                        WHEN TRIM(split_part("{col}", ';', {i})) ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$' THEN 
+                            TRIM(split_part("{col}", ';', {i}))::DATE
+                        ELSE NULL
+                    END"""
+                    
+                elif pg_type == 'BOOLEAN':
+                    # BOOLEAN : Conversion stricte yes/no
+                    expr = f"""CASE 
+                        WHEN LOWER(TRIM(split_part("{col}", ';', {i}))) IN ('yes', 'true', '1') THEN TRUE
+                        WHEN LOWER(TRIM(split_part("{col}", ';', {i}))) IN ('no', 'false', '0') THEN FALSE
+                        ELSE NULL
+                    END"""
+                    
                 else:
-                    # TEXT : Simple split
-                    expr = f"""split_part("{col}", ';', {i})"""
+                    # TEXT : NULLIF pour valeurs vides
+                    expr = f"""NULLIF(NULLIF(TRIM(split_part("{col}", ';', {i})), ''), '?')"""
                 
                 select_parts.append(f"{expr} AS {expanded_col}")
                 ods_columns.append(expanded_col)

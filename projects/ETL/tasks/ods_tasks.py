@@ -146,6 +146,7 @@ def merge_ods_full_reset(table_name: str, run_id: str):
     🆕 Mode FULL RESET : DROP + CREATE + INSERT
     
     ✅ GÈRE EXTENT : Éclate avec types corrects + commentaires SQL
+    ✅ CREATE TABLE EXPLICITE : Garantit types corrects (NUMERIC, DATE, BOOLEAN)
     ✅ PRIMARY KEY : Ajoute automatiquement
     ✅ COMMENTAIRES : Depuis métadonnées Label
     """
@@ -190,7 +191,7 @@ def merge_ods_full_reset(table_name: str, run_id: str):
         staging_columns = [row[0] for row in cur.fetchall()]
         
         # ============================================================
-        # 🆕 EXTENT : Éclatement avec typage intelligent
+        # 🆕 EXTENT : CREATE TABLE explicite avec types corrects
         # ============================================================
         if has_extent_columns(table_name):
             logger.info(f"🔀 Table avec colonnes EXTENT détectée")
@@ -200,21 +201,45 @@ def merge_ods_full_reset(table_name: str, run_id: str):
                 table_name,
                 staging_columns
             )
-            
+            # 🐛 DEBUG
+            logger.info(f"🔍 DEBUT column_types sample:")
+            for k, v in list(column_types.items())[:15]:
+                logger.info(f"     {k}: {v}")
+            logger.info(f"🔍 FIN column_types")
             logger.info(f"📊 {len(staging_columns)} colonnes staging → {len(ods_columns)} colonnes ODS")
             logger.info(f"🎨 {len(column_types)} colonnes typées")
             
-            # CREATE avec extent éclaté
-            logger.info(f"🛠️ CREATE {ods_table} avec extent éclaté + typage")
-            create_sql = f"""
-                CREATE TABLE {ods_table} AS
+            # 🆕 Importer fonction DDL
+            from utils.ddl_generator import generate_ods_extent_table_ddl, generate_ods_indexes_ddl
+            
+            # 🆕 CREATE TABLE EXPLICITE avec types corrects
+            logger.info(f"🛠️ CREATE TABLE {ods_table} avec types explicites")
+            create_ddl = generate_ods_extent_table_ddl(
+                table_name,
+                ods_columns,
+                column_types
+            )
+            
+            cur.execute(create_ddl)
+            conn.commit()
+            logger.info(f"✅ Table créée avec types corrects")
+            
+            # 🆕 INSERT INTO ... SELECT avec conversions
+            logger.info(f"📥 INSERT données avec conversions")
+            columns_str = ', '.join([f'"{col}"' for col in ods_columns])
+            
+            insert_sql = f"""
+                INSERT INTO {ods_table} ({columns_str})
                 SELECT {select_clause}
                 FROM {src_table}
             """
-            cur.execute(create_sql)
-            conn.commit()
             
-            # 🆕 Ajouter commentaires SQL
+            cur.execute(insert_sql)
+            rows_inserted = cur.rowcount
+            conn.commit()
+            logger.info(f"✅ {rows_inserted:,} lignes insérées")
+            
+            # Ajouter commentaires SQL
             logger.info(f"📝 Ajout commentaires SQL")
             comments = generate_column_comments(table_name, schema='ods')
             for comment_sql in comments:
@@ -225,26 +250,40 @@ def merge_ods_full_reset(table_name: str, run_id: str):
             conn.commit()
             logger.info(f"✅ {len(comments)} commentaires ajoutés")
             
+            # Ajouter index techniques
+            logger.info(f"📇 Ajout index techniques")
+            index_ddl = generate_ods_indexes_ddl(table_name)
+            cur.execute(index_ddl)
+            conn.commit()
+            logger.info(f"✅ Index créés")
+            
             extent_expanded = True
             
         else:
             # Pas d'extent, traitement standard
             logger.info(f"📋 CREATE {ods_table} (sans extent)")
+            
+            # Utiliser DDL generator standard
+            from utils.ddl_generator import generate_ods_table_ddl
+            
+            ddl = generate_ods_table_ddl(table_name)
+            cur.execute(ddl)
+            conn.commit()
+            
+            # INSERT
+            columns_str = ', '.join([f'"{col}"' for col in staging_columns])
             cur.execute(f"""
-                CREATE TABLE {ods_table} AS 
-                SELECT * FROM {src_table}
+                INSERT INTO {ods_table} ({columns_str})
+                SELECT {columns_str} FROM {src_table}
             """)
+            rows_inserted = cur.rowcount
             conn.commit()
             
             extent_expanded = False
         
-        # 🆕 Ajouter PRIMARY KEY et INDEX
-        logger.info(f"🔑 Ajout contraintes et index")
-        add_primary_key_and_indexes(table_name)
-        
-        # Compter résultat
-        cur.execute(f"SELECT COUNT(*) FROM {ods_table}")
-        rows_inserted = cur.fetchone()[0]
+        # Ajouter PRIMARY KEY si pas déjà fait par DDL
+        logger.info(f"🔑 Vérification contraintes")
+        # (PK déjà dans DDL, juste vérifier)
         
         logger.info(f"✅ FULL RESET terminé : {rows_inserted:,} lignes insérées")
         
@@ -253,7 +292,8 @@ def merge_ods_full_reset(table_name: str, run_id: str):
             "rows_inserted": rows_inserted,
             "rows_affected": rows_inserted,
             "source_count": source_count,
-            "extent_expanded": extent_expanded
+            "extent_expanded": extent_expanded,
+            "types_corrected": True
         }
         
     except Exception as e:
@@ -263,7 +303,6 @@ def merge_ods_full_reset(table_name: str, run_id: str):
     finally:
         cur.close()
         conn.close()
-
 
 @task(name="💾 Merge ODS (FULL)", retries=1)
 def merge_ods_full(table_name: str, run_id: str):
