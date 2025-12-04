@@ -16,6 +16,7 @@ from datetime import datetime
 from io import StringIO
 import pandas as pd
 import psycopg2
+import pyarrow.parquet as pq
 from psycopg2.extras import Json
 from prefect import flow, task
 from prefect.logging import get_run_logger
@@ -130,81 +131,69 @@ def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
         cur.close()
         conn.close()
 
-
-
 @task(name="📥 Charger dans RAW (DROP + CREATE + COPY)")
-def load_to_raw(file_path: str, log_id: int, metadata: dict):
-    """
-    Charge le fichier parquet dans raw.raw_{table}
-    
-    IMPORTANT : 
-    - DROP TABLE à chaque fois (refresh complet)
-    - Colonnes business + _loaded_at, _source_file, _sftp_log_id
-    - PAS de _etl_hashdiff (sera ajouté dans STAGING)
-    """
+def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
     logger = get_run_logger()
-    file_name = os.path.basename(file_path)
-
-    # Déterminer nom de table
-    if metadata and "table_name" in metadata:
-        table_short = metadata["table_name"].lower()
-    else:
-        table_short = file_name.split("_")[0].lower()
-
-    table_name = f"raw_{table_short}"
-    full_table = f"{config.schema_raw}.{table_name}"
-
-    # Lire parquet
-    df = pd.read_parquet(file_path)
     
-    # Ajouter colonnes ETL (pas de hashdiff ici)
-    df["_loaded_at"] = datetime.now()
-    df["_source_file"] = file_name
-    df["_sftp_log_id"] = log_id
+    file_name = Path(parquet_path).name
+    table_short = metadata.get('table_name', 'unknown')
+    table_name = f"raw_{table_short.lower()}"
+    full_table = f"{config.schema_raw}.{table_name}"
 
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
 
-    # DROP + CREATE
+    # DROP
     logger.info(f"[DROP] DROP {full_table}")
     cur.execute(f'DROP TABLE IF EXISTS {full_table} CASCADE;')
     conn.commit()
 
+    # Lire schema pour CREATE
     logger.info(f"[TOOLS] CREATE {full_table}")
+    parquet_file = pq.ParquetFile(parquet_path)
+    df_sample = parquet_file.read_row_group(0, columns=parquet_file.schema.names).to_pandas().head(1)
+    
+    # Ajouter colonnes ETL
+    df_sample["_loaded_at"] = datetime.now()
+    df_sample["_source_file"] = file_name
+    df_sample["_sftp_log_id"] = log_id
+    
+    # CREATE
     engine = create_engine(config.get_sqlalchemy_url(config.schema_raw))
-    df.head(0).to_sql(
-        name=table_name,
-        con=engine,
-        schema=config.schema_raw,
-        if_exists="replace",
-        index=False
-    )
+    df_sample.head(0).to_sql(name=table_name, con=engine, schema=config.schema_raw, if_exists="replace", index=False)
+    engine.dispose()
 
-    # COPY
-    logger.info("[START] COPY données")
-    output = StringIO()
-    df.to_csv(output, sep="\t", header=False, index=False, na_rep="\\N")
-    output.seek(0)
-
-    col_list = ",".join([f'"{c}"' for c in df.columns])
-    copy_sql = f"""
-    COPY {full_table} ({col_list})
-    FROM STDIN WITH (FORMAT CSV, DELIMITER E'\\t', NULL '\\N');
-    """
-
-    cur.copy_expert(copy_sql, output)
+    # COPY par batches
+    logger.info("[START] COPY (streaming)")
+    
+    col_list = ",".join([f'"{c}"' for c in df_sample.columns])
+    copy_sql = f'COPY {full_table} ({col_list}) FROM STDIN WITH (FORMAT CSV, DELIMITER E\'\\t\', NULL \'\\N\');'
+    
+    batch_size = 50000
+    total_rows = 0
+    
+    for i, batch in enumerate(parquet_file.iter_batches(batch_size=batch_size), 1):
+        chunk = batch.to_pandas()
+        chunk["_loaded_at"] = datetime.now()
+        chunk["_source_file"] = file_name
+        chunk["_sftp_log_id"] = log_id
+        
+        output = StringIO()
+        chunk.to_csv(output, sep="\t", header=False, index=False, na_rep="\\N")
+        output.seek(0)
+        
+        cur.copy_expert(copy_sql, output)
+        
+        total_rows += len(chunk)
+        if i % 10 == 0:
+            logger.info(f"  [{total_rows:,} lignes]")
+    
     conn.commit()
-
-    logger.info(f"[OK] {len(df):,} lignes chargées")
+    logger.info(f"[OK] {total_rows:,} lignes")
     cur.close()
     conn.close()
 
-    return {
-        "rows_loaded": len(df), 
-        "table_name": table_short,
-        "full_table": full_table
-    }
-
+    return {"rows_loaded": total_rows, "table_name": table_short, "full_table": full_table}
 
 @task(name="[PACKAGE] Archiver + Nettoyer SFTP")
 def archive_files(parquet_path: str):
