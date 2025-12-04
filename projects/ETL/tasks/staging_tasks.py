@@ -104,8 +104,16 @@ def create_staging_table(table_name: str):
         conn.close()
 
 
-@task(name="📥 Charger RAW → STAGING avec nettoyage + hashdiff")
-def load_raw_to_staging(table_name: str, run_id: str):
+@task(name="📥 Charger RAW → STAGING avec nettoyage + hashdiff + UPSERT")
+def load_raw_to_staging(table_name: str, run_id: str, load_mode: str = "AUTO"):
+    """
+    Charge RAW → STAGING avec UPSERT en mode INCREMENTAL
+    
+    Args:
+        table_name: Nom physique de la table
+        run_id: ID du run
+        load_mode: FULL, INCREMENTAL, ou AUTO
+    """
     logger = get_run_logger()
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
@@ -126,10 +134,11 @@ def load_raw_to_staging(table_name: str, run_id: str):
         base_table = table_name
         physical_name = table_name
 
-    raw_table = f"raw.raw_{physical_name.lower()}"
-    stg_table = f"staging_etl.stg_{physical_name.lower()}"
+    raw_table = f"raw.raw_{table_name.lower()}"
+    stg_table = f"staging_etl.stg_{table_name.lower()}"
 
     logger.info(f"[DATA] RAW={raw_table}, STAGING={stg_table}, BASE={base_table}")
+    logger.info(f"[MODE] Load mode : {load_mode}")
 
     try:
         # Vérifier existence RAW
@@ -152,6 +161,10 @@ def load_raw_to_staging(table_name: str, run_id: str):
         if not business_cols:
             logger.error(f"[ERROR] Colonnes non trouvées pour {base_table}")
             return
+
+        # Récupérer PK
+        from flows.config.table_metadata import get_primary_keys
+        pk_columns = get_primary_keys(base_table)
 
         # ==============================
         #  Construction SELECT typé
@@ -229,26 +242,118 @@ END AS "{col}"
         ])
 
         # ==============================
-        #  INSERT INTO STAGING
+        #  STRATÉGIE SELON LOAD_MODE
         # ==============================
-        insert_sql = f"""
-            INSERT INTO {stg_table} (
-                {', '.join(f'"{c}"' for c in business_cols)},
-                _etl_hashdiff,
-                _etl_valid_from,
-                _etl_run_id
-            )
-            SELECT
-                {select_sql}
-            FROM {raw_table}
-        """
-
-        logger.info(f"📥 INSERT → {stg_table}")
-        cur.execute(insert_sql)
-        conn.commit()
-
-        logger.info(f"[OK] {cur.rowcount:,} lignes insérées dans {stg_table}")
-        return cur.rowcount
+        
+        if load_mode in ("FULL", "FULL_RESET"):
+            # MODE FULL : TRUNCATE + INSERT
+            logger.info(f"[FULL] TRUNCATE + INSERT dans {stg_table}")
+            
+            cur.execute(f"TRUNCATE TABLE {stg_table}")
+            conn.commit()
+            
+            insert_sql = f"""
+                INSERT INTO {stg_table} (
+                    {', '.join(f'"{c}"' for c in business_cols)},
+                    _etl_hashdiff,
+                    _etl_valid_from,
+                    _etl_run_id
+                )
+                SELECT
+                    {select_sql}
+                FROM {raw_table}
+            """
+            
+            cur.execute(insert_sql)
+            rows_affected = cur.rowcount
+            conn.commit()
+            logger.info(f"[OK] {rows_affected:,} lignes insérées (FULL)")
+            
+        else:
+            # MODE INCREMENTAL : UPSERT
+            logger.info(f"[INCREMENTAL] UPSERT dans {stg_table}")
+            
+            if not pk_columns:
+                logger.warning(f"[WARN] Pas de PK, fallback sur TRUNCATE + INSERT")
+                cur.execute(f"TRUNCATE TABLE {stg_table}")
+                conn.commit()
+                
+                insert_sql = f"""
+                    INSERT INTO {stg_table} (
+                        {', '.join(f'"{c}"' for c in business_cols)},
+                        _etl_hashdiff,
+                        _etl_valid_from,
+                        _etl_run_id
+                    )
+                    SELECT
+                        {select_sql}
+                    FROM {raw_table}
+                """
+                cur.execute(insert_sql)
+                rows_affected = cur.rowcount
+                conn.commit()
+                logger.info(f"[OK] {rows_affected:,} lignes insérées (no PK)")
+                
+            else:
+                # UPSERT avec PK
+                pk_join = ' AND '.join([f'target."{pk}" = source."{pk}"' for pk in pk_columns])
+                
+                # 1. INSERT nouveaux
+                insert_sql = f"""
+                    INSERT INTO {stg_table} (
+                        {', '.join(f'"{c}"' for c in business_cols)},
+                        _etl_hashdiff,
+                        _etl_valid_from,
+                        _etl_run_id
+                    )
+                    SELECT
+                        {select_sql}
+                    FROM {raw_table} AS source
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM {stg_table} AS target
+                        WHERE {pk_join}
+                    )
+                """
+                cur.execute(insert_sql)
+                inserted = cur.rowcount
+                conn.commit()
+                logger.info(f"[ADD] {inserted:,} lignes insérées")
+                
+                # 2. UPDATE modifiés
+                update_cols = [c for c in business_cols if c not in pk_columns]
+                
+                if update_cols:
+                    set_clause = ', '.join([f'"{col}" = source."{col}"' for col in update_cols])
+                    full_set = f'{set_clause}, "_etl_hashdiff" = source."_etl_hashdiff", "_etl_valid_from" = source."_etl_valid_from", "_etl_run_id" = source."_etl_run_id"'
+                else:
+                    full_set = '"_etl_hashdiff" = source."_etl_hashdiff", "_etl_valid_from" = source."_etl_valid_from", "_etl_run_id" = source."_etl_run_id"'
+                
+                # Construire sous-requête source
+                source_subquery = f"""
+                    (SELECT
+                        {', '.join(f'"{c}"' for c in business_cols)},
+                        {hash_expr},
+                        CURRENT_TIMESTAMP AS _etl_valid_from,
+                        '{run_id}' AS _etl_run_id
+                    FROM {raw_table}) AS source
+                """
+                
+                update_sql = f"""
+                    UPDATE {stg_table} AS target
+                    SET {full_set}
+                    FROM {source_subquery}
+                    WHERE {pk_join}
+                      AND target."_etl_hashdiff" != source."_etl_hashdiff"
+                """
+                cur.execute(update_sql)
+                updated = cur.rowcount
+                conn.commit()
+                logger.info(f"[SYNC] {updated:,} lignes mises à jour")
+                
+                rows_affected = inserted + updated
+                logger.info(f"[OK] Total : {rows_affected:,} lignes affectées (UPSERT)")
+        
+        return rows_affected
 
     except Exception as e:
         conn.rollback()
@@ -258,5 +363,3 @@ END AS "{col}"
     finally:
         cur.close()
         conn.close()
-
-

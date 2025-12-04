@@ -26,7 +26,7 @@ import sys
 sys.path.append(r'E:\Prefect\projects\ETL')
 from flows.config.pg_config import config
 from utils.file_operations import archive_and_cleanup
-
+from utils.filename_parser import parse_and_resolve
 
 @task(name="[OPEN] Scanner SFTP parquet")
 def scan_sftp_directory():
@@ -131,77 +131,162 @@ def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
         cur.close()
         conn.close()
 
-@task(name="📥 Charger dans RAW (DROP + CREATE + COPY)")
+
+@task(name="📥 Charger dans RAW (DROP + CREATE + COPY) [FIXED]")
 def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
+    """
+    Charge fichier parquet dans RAW avec parsing ConfigName correct
+    
+    Args:
+        parquet_path: Chemin fichier .parquet
+        log_id: ID du log sftp_monitoring
+        metadata: Contenu *_metadata.json
+    
+    Returns:
+        dict: {
+            'rows_loaded': int,
+            'table_name': str,        # Nom business
+            'config_name': str|None,  # ConfigName si existe
+            'physical_name': str,     # Nom physique table RAW
+            'full_table': str         # Nom complet avec schema
+        }
+    """
     logger = get_run_logger()
     
     file_name = Path(parquet_path).name
-    table_short = metadata.get('table_name', 'unknown')
-    config_name = metadata.get('config_name', None)
     
-    # [FIX] Si config_name existe, utiliser config_name
-    if config_name and config_name != table_short:
-        table_name = f"raw_{config_name.lower()}"
-        logger.info(f"[CONFIG] table={table_short}, config={config_name} → {table_name}")
-    else:
-        table_name = f"raw_{table_short.lower()}"
+    # ========================================================================
+    # ÉTAPE 1 : Parse et résout les noms avec validation
+    # ========================================================================
     
+    names = parse_and_resolve(file_name, metadata, strict=False)
+    
+    # Log infos parsing
+    logger.info("="*80)
+    logger.info("📋 PARSING FICHIER")
+    logger.info("="*80)
+    logger.info(f"Fichier           : {file_name}")
+    logger.info(f"File Identifier   : {names['table_identifier']}")
+    logger.info(f"TableName         : {names['table_name']}")
+    logger.info(f"ConfigName        : {names['config_name'] or 'N/A'}")
+    logger.info(f"Physical Name     : {names['physical_name']}")
+    logger.info(f"Valid             : {names['is_valid']}")
+    
+    if names['validation_message']:
+        if names['is_valid']:
+            logger.warning(f"⚠️  {names['validation_message']}")
+        else:
+            logger.error(f"❌ {names['validation_message']}")
+            # En mode non-strict, on continue quand même
+    
+    logger.info("="*80)
+    
+    # ========================================================================
+    # ÉTAPE 2 : Construire nom table RAW
+    # ========================================================================
+    
+    # Utiliser physical_name (qui prend ConfigName si existe)
+    table_name = f"raw_{names['physical_name'].lower()}"
     full_table = f"{config.schema_raw}.{table_name}"
-
+    
+    logger.info(f"[TARGET] Table RAW : {full_table}")
+    
+    # ========================================================================
+    # ÉTAPE 3 : DROP table existante
+    # ========================================================================
+    
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
-
-    # DROP
-    logger.info(f"[DROP] DROP {full_table}")
-    cur.execute(f'DROP TABLE IF EXISTS {full_table} CASCADE;')
-    conn.commit()
-
-    # Lire schema pour CREATE
-    logger.info(f"[TOOLS] CREATE {full_table}")
-    parquet_file = pq.ParquetFile(parquet_path)
-    df_sample = parquet_file.read_row_group(0, columns=parquet_file.schema.names).to_pandas().head(1)
     
-    # Ajouter colonnes ETL
-    df_sample["_loaded_at"] = datetime.now()
-    df_sample["_source_file"] = file_name
-    df_sample["_sftp_log_id"] = log_id
-    
-    # CREATE
-    engine = create_engine(config.get_sqlalchemy_url(config.schema_raw))
-    df_sample.head(0).to_sql(name=table_name, con=engine, schema=config.schema_raw, if_exists="replace", index=False)
-    engine.dispose()
-
-    # COPY par batches
-    logger.info("[START] COPY (streaming)")
-    
-    col_list = ",".join([f'"{c}"' for c in df_sample.columns])
-    copy_sql = f'COPY {full_table} ({col_list}) FROM STDIN WITH (FORMAT CSV, DELIMITER E\'\\t\', NULL \'\\N\');'
-    
-    batch_size = 50000
-    total_rows = 0
-    
-    for i, batch in enumerate(parquet_file.iter_batches(batch_size=batch_size), 1):
-        chunk = batch.to_pandas()
-        chunk["_loaded_at"] = datetime.now()
-        chunk["_source_file"] = file_name
-        chunk["_sftp_log_id"] = log_id
+    try:
+        logger.info(f"[DROP] DROP TABLE IF EXISTS {full_table}")
+        cur.execute(f'DROP TABLE IF EXISTS {full_table} CASCADE;')
+        conn.commit()
         
-        output = StringIO()
-        chunk.to_csv(output, sep="\t", header=False, index=False, na_rep="\\N")
-        output.seek(0)
+        # ====================================================================
+        # ÉTAPE 4 : CREATE table avec schema Parquet
+        # ====================================================================
         
-        cur.copy_expert(copy_sql, output)
+        logger.info(f"[SCHEMA] Lecture schema Parquet")
+        parquet_file = pq.ParquetFile(parquet_path)
+        df_sample = parquet_file.read_row_group(
+            0, 
+            columns=parquet_file.schema.names
+        ).to_pandas().head(1)
         
-        total_rows += len(chunk)
-        if i % 10 == 0:
-            logger.info(f"  [{total_rows:,} lignes]")
-    
-    conn.commit()
-    logger.info(f"[OK] {total_rows:,} lignes")
-    cur.close()
-    conn.close()
-    physical_name = config_name.lower() if config_name else table_short.lower()
-    return {"rows_loaded": total_rows, "table_name": physical_name, "full_table": full_table}
+        # Ajouter colonnes ETL
+        df_sample["_loaded_at"] = datetime.now()
+        df_sample["_source_file"] = file_name
+        df_sample["_sftp_log_id"] = log_id
+        
+        logger.info(f"[CREATE] CREATE TABLE {full_table}")
+        engine = create_engine(config.get_sqlalchemy_url(config.schema_raw))
+        df_sample.head(0).to_sql(
+            name=table_name,
+            con=engine,
+            schema=config.schema_raw,
+            if_exists="replace",
+            index=False
+        )
+        engine.dispose()
+        
+        # ====================================================================
+        # ÉTAPE 5 : COPY données par batches
+        # ====================================================================
+        
+        logger.info("[COPY] Chargement données (streaming)")
+        
+        col_list = ",".join([f'"{c}"' for c in df_sample.columns])
+        copy_sql = (
+            f'COPY {full_table} ({col_list}) '
+            f"FROM STDIN WITH (FORMAT CSV, DELIMITER E'\\t', NULL '\\N');"
+        )
+        
+        batch_size = 50000
+        total_rows = 0
+        
+        for i, batch in enumerate(parquet_file.iter_batches(batch_size=batch_size), 1):
+            chunk = batch.to_pandas()
+            chunk["_loaded_at"] = datetime.now()
+            chunk["_source_file"] = file_name
+            chunk["_sftp_log_id"] = log_id
+            
+            output = StringIO()
+            chunk.to_csv(output, sep="\t", header=False, index=False, na_rep="\\N")
+            output.seek(0)
+            
+            cur.copy_expert(copy_sql, output)
+            
+            total_rows += len(chunk)
+            if i % 10 == 0:
+                logger.info(f"  [{total_rows:,} lignes chargées]")
+        
+        conn.commit()
+        
+        logger.info("="*80)
+        logger.info(f"✅ SUCCESS")
+        logger.info(f"   Table    : {full_table}")
+        logger.info(f"   Lignes   : {total_rows:,}")
+        logger.info(f"   Physical : {names['physical_name']}")
+        logger.info("="*80)
+        
+        return {
+            'rows_loaded': total_rows,
+            'table_name': names['table_name'],
+            'config_name': names['config_name'],
+            'physical_name': names['physical_name'],
+            'full_table': full_table
+        }
+        
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"[ERROR] Erreur chargement RAW : {e}")
+        raise
+        
+    finally:
+        cur.close()
+        conn.close()
+
 
 @task(name="[PACKAGE] Archiver + Nettoyer SFTP")
 def archive_files(parquet_path: str):
@@ -270,7 +355,7 @@ def sftp_to_raw_flow():
             archive_files(f)
             
             total_rows += result['rows_loaded']
-            tables_loaded.append(result["table_name"])
+            tables_loaded.append(result["physical_name"])
             
             logger.info(f"[OK] Table physique chargée : {result['table_name']}")
             

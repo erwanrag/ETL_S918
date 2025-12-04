@@ -53,44 +53,53 @@ def _clean_progress_label(raw_label: Optional[str]) -> str:
 def get_extent_columns_with_metadata(table_name: str) -> Dict[str, Dict]:
     """
     Récupérer colonnes extent avec métadonnées complètes
-    
-    Returns:
-        Dict[column_name, {
-            'extent': int,
-            'progress_type': str,
-            'data_type': str,
-            'width': int,
-            'scale': int,
-            'label': str,      # Nettoyé et encodé
-            'description': str # Nettoyé et encodé
-        }]
     """
     conn = psycopg2.connect(config.get_connection_string())
     
     try:
-        # [CORRECTION] Force l'encodage client à UTF8 pour éviter les problèmes d'accents
         conn.set_client_encoding('UTF8')
         cur = conn.cursor()
         
+        # Essayer d'abord avec le nom donné
         cur.execute("""
             SELECT 
-                "ColumnName",
-                "Extent",
-                "ProgressType",
-                "DataType",
-                "Width",
-                "Scale",
-                "Label",
-                "Description"
+                "ColumnName", "Extent", "ProgressType", "DataType",
+                "Width", "Scale", "Label", "Description"
             FROM metadata.proginovcolumns
             WHERE UPPER("TableName") = UPPER(%s)
               AND "Extent" > 0
             ORDER BY "ColumnName"
         """, (table_name,))
         
+        rows = cur.fetchall()
+        
+        # Si rien trouvé, résoudre via etl_tables
+        if not rows:
+            cur.execute("""
+                SELECT "TableName"
+                FROM metadata.etl_tables
+                WHERE "ConfigName" = %s
+                LIMIT 1
+            """, (table_name,))
+            
+            row = cur.fetchone()
+            if row:
+                base_table = row[0]
+                cur.execute("""
+                    SELECT 
+                        "ColumnName", "Extent", "ProgressType", "DataType",
+                        "Width", "Scale", "Label", "Description"
+                    FROM metadata.proginovcolumns
+                    WHERE UPPER("TableName") = UPPER(%s)
+                      AND "Extent" > 0
+                    ORDER BY "ColumnName"
+                """, (base_table,))
+                
+                rows = cur.fetchall()
+        
+        # Construire résultat
         result = {}
-        for row in cur.fetchall():
-            # Nettoyage immédiat des labels et descriptions
+        for row in rows:
             cleaned_label = _clean_progress_label(row[6])
             cleaned_desc = _clean_progress_label(row[7])
 
@@ -110,16 +119,18 @@ def get_extent_columns_with_metadata(table_name: str) -> Dict[str, Dict]:
         if conn:
             conn.close()
 
-
 def get_extent_columns_for_table(table_name: str) -> Dict[str, int]:
     """
-    Récupérer colonnes avec extent > 0 (version simple, rétrocompatibilité)
+    Récupérer colonnes avec extent > 0
+    
+    IMPORTANT: Cherche d'abord par ConfigName puis par TableName
     """
     conn = psycopg2.connect(config.get_connection_string())
     try:
-        conn.set_client_encoding('UTF8') # Sécurité encodage
+        conn.set_client_encoding('UTF8')
         cur = conn.cursor()
         
+        # Essayer d'abord avec le nom donné (peut être ConfigName)
         cur.execute("""
             SELECT "ColumnName", "Extent"
             FROM metadata.proginovcolumns
@@ -128,7 +139,31 @@ def get_extent_columns_for_table(table_name: str) -> Dict[str, int]:
             ORDER BY "ColumnName"
         """, (table_name,))
         
-        return {row[0]: row[1] for row in cur.fetchall()}
+        result = {row[0]: row[1] for row in cur.fetchall()}
+        
+        # Si rien trouvé, essayer de résoudre via etl_tables
+        if not result:
+            cur.execute("""
+                SELECT "TableName"
+                FROM metadata.etl_tables
+                WHERE "ConfigName" = %s
+                LIMIT 1
+            """, (table_name,))
+            
+            row = cur.fetchone()
+            if row:
+                base_table = row[0]
+                cur.execute("""
+                    SELECT "ColumnName", "Extent"
+                    FROM metadata.proginovcolumns
+                    WHERE UPPER("TableName") = UPPER(%s)
+                      AND "Extent" > 0
+                    ORDER BY "ColumnName"
+                """, (base_table,))
+                
+                result = {row[0]: row[1] for row in cur.fetchall()}
+        
+        return result
     finally:
         conn.close()
 

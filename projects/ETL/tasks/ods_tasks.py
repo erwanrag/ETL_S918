@@ -139,7 +139,6 @@ def add_primary_key_and_indexes(table_name: str, schema: str = 'ods'):
         cur.close()
         conn.close()
 
-
 @task(name="[SAVE] Merge ODS (FULL RESET)", retries=1)
 def merge_ods_full_reset(table_name: str, run_id: str):
     """
@@ -226,14 +225,14 @@ def merge_ods_full_reset(table_name: str, run_id: str):
             
             # [NEW] INSERT INTO ... SELECT avec conversions
             logger.info(f"📥 INSERT données avec conversions")
-            columns_str = ', '.join([f'"{col}"' for col in ods_columns])
-            
+            common_cols = [c for c in staging_columns if c in ods_columns]
+            cols_str = ', '.join(f'"{c}"' for c in common_cols)
+
             insert_sql = f"""
-                INSERT INTO {ods_table} ({columns_str})
-                SELECT {select_clause}
+                INSERT INTO {ods_table} ({cols_str})
+                SELECT {cols_str}
                 FROM {src_table}
             """
-            
             cur.execute(insert_sql)
             rows_inserted = cur.rowcount
             conn.commit()
@@ -260,24 +259,24 @@ def merge_ods_full_reset(table_name: str, run_id: str):
             extent_expanded = True
             
         else:
-            # Pas d'extent, traitement standard
-            logger.info(f"[LIST] CREATE {ods_table} (sans extent)")
+            # Pas d'extent, copier structure STAGING directement
+            logger.info(f"[LIST] CREATE {ods_table} (copie structure STAGING)")
             
-            # Utiliser DDL generator standard
-            from utils.ddl_generator import generate_ods_table_ddl
-            
-            ddl = generate_ods_table_ddl(table_name)
-            cur.execute(ddl)
-            conn.commit()
-            
-            # INSERT
-            columns_str = ', '.join([f'"{col}"' for col in staging_columns])
+            # [FIX] Créer table ODS comme copie EXACTE de STAGING
             cur.execute(f"""
-                INSERT INTO {ods_table} ({columns_str})
-                SELECT {columns_str} FROM {src_table}
+                CREATE TABLE {ods_table} AS 
+                SELECT * FROM {src_table} 
+                WHERE FALSE
             """)
+            conn.commit()
+            logger.info(f"[OK] Table {ods_table} créée (structure STAGING)")
+            
+            # INSERT toutes les données
+            cur.execute(f"INSERT INTO {ods_table} SELECT * FROM {src_table}")
             rows_inserted = cur.rowcount
             conn.commit()
+            
+            logger.info(f"[OK] {rows_inserted:,} lignes insérées")
             
             extent_expanded = False
         
@@ -358,7 +357,27 @@ def merge_ods_full(table_name: str, run_id: str):
         conn.commit()
         
         logger.info(f"📥 INSERT INTO {ods_table}")
-        cur.execute(f"INSERT INTO {ods_table} SELECT * FROM {src_table}")
+        cur.execute(f"""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_schema = 'ods' AND table_name = '{table_name.lower()}'
+            ORDER BY ordinal_position
+        """)
+        ods_cols = [row[0] for row in cur.fetchall()]
+
+        cur.execute(f"""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_schema = 'staging_etl' AND table_name = 'stg_{table_name.lower()}'
+            ORDER BY ordinal_position
+        """)
+        stg_cols = [row[0] for row in cur.fetchall()]
+
+        # Colonnes communes
+        common_cols = [c for c in stg_cols if c in ods_cols]
+        cols_str = ', '.join(f'"{c}"' for c in common_cols)
+
+        cur.execute(f"INSERT INTO {ods_table} ({cols_str}) SELECT {cols_str} FROM {src_table}")
         inserted_count = cur.rowcount
         conn.commit()
         
