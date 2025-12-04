@@ -12,21 +12,23 @@ cbm_analytics:
       host: localhost
       port: 5432
       user: postgres
-      password: "Dbyk!vMWZ4z0v*"
+      password: "{{ env_var('DBT_POSTGRES_PASSWORD') }}"
       dbname: etl_db
       schema: raw
       threads: 4
       keepalives_idle: 0
       connect_timeout: 10
       search_path: raw,staging,ods,marts,public
+      client_encoding: utf8
     
     prod:
       type: postgres
       host: localhost
       port: 5432
       user: postgres
-      password: "Dbyk!vMWZ4z0v*"
+      password: "{{ env_var('DBT_POSTGRES_PASSWORD') }}"
       dbname: etl_db
       schema: ods
       threads: 8
       search_path: ods,marts,raw,staging,public
+      client_encoding: utf8
