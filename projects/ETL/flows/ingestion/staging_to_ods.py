@@ -35,7 +35,7 @@ def list_staging_tables():
           AND table_name LIKE 'stg_%'
         ORDER BY table_name
     """)
-    
+ 
     tables = [row[0].replace('stg_', '') for row in cur.fetchall()]
     
     cur.close()

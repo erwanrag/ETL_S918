@@ -137,7 +137,15 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
     
     file_name = Path(parquet_path).name
     table_short = metadata.get('table_name', 'unknown')
-    table_name = f"raw_{table_short.lower()}"
+    config_name = metadata.get('config_name', None)
+    
+    # [FIX] Si config_name existe, utiliser config_name
+    if config_name and config_name != table_short:
+        table_name = f"raw_{config_name.lower()}"
+        logger.info(f"[CONFIG] table={table_short}, config={config_name} → {table_name}")
+    else:
+        table_name = f"raw_{table_short.lower()}"
+    
     full_table = f"{config.schema_raw}.{table_name}"
 
     conn = psycopg2.connect(config.get_connection_string())
@@ -192,8 +200,8 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
     logger.info(f"[OK] {total_rows:,} lignes")
     cur.close()
     conn.close()
-
-    return {"rows_loaded": total_rows, "table_name": table_short, "full_table": full_table}
+    physical_name = config_name.lower() if config_name else table_short.lower()
+    return {"rows_loaded": total_rows, "table_name": physical_name, "full_table": full_table}
 
 @task(name="[PACKAGE] Archiver + Nettoyer SFTP")
 def archive_files(parquet_path: str):
@@ -262,9 +270,9 @@ def sftp_to_raw_flow():
             archive_files(f)
             
             total_rows += result['rows_loaded']
-            tables_loaded.append(table_name)
+            tables_loaded.append(result["table_name"])
             
-            logger.info(f"[OK] {table_name} : {result['rows_loaded']:,} lignes")
+            logger.info(f"[OK] Table physique chargée : {result['table_name']}")
             
         except Exception as e:
             logger.error(f"[ERROR] Erreur {f} : {e}")

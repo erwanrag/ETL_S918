@@ -61,11 +61,12 @@ def raw_to_staging_flow(
     processed = []
 
     for table in tables:
+        # [NOTE] table = 'lisval_fou_production' (sans raw_)
         logger.info(f"[CONFIG] Création STAGING {table}")
-        create_staging_table(table)  # <-- NOUVEAU
+        create_staging_table(table)
 
         logger.info(f"📥 Chargement RAW → STAGING {table}")
-        rows = load_raw_to_staging(table, run_id)  # <-- NOUVEAU
+        rows = load_raw_to_staging(table, run_id)
 
         total_rows += (rows or 0)
         processed.append(table)
@@ -78,7 +79,6 @@ def raw_to_staging_flow(
         "tables": processed,
         "run_id": run_id
     }
-
 
 if __name__ == "__main__":
     raw_to_staging_flow()
