@@ -63,7 +63,7 @@ def generate_raw_table_ddl(table_name: str) -> str:
 {cols_joined}
 );
 
--- Index sur colonnes techniques
+
 CREATE INDEX IF NOT EXISTS idx_raw_{table_name.lower()}_loaded 
     ON raw.raw_{table_name.lower()}(_loaded_at);
 """
