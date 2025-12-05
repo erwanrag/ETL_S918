@@ -1,10 +1,11 @@
 """
 ============================================================================
-Flow Prefect : RAW → STAGING_ETL
+Flow Prefect : RAW -> STAGING_ETL
 ============================================================================
-Responsabilité :
-- Créer STAGING typé depuis metadata
-- Charger RAW → STAGING avec nettoyage + hashdiff + UPSERT
+Responsabilite :
+- Creer STAGING type depuis metadata
+- Charger RAW -> STAGING avec nettoyage + hashdiff + UPSERT
+- Protection contre tables RAW vides
 ============================================================================
 """
 
@@ -40,10 +41,59 @@ def list_raw_tables():
     return tables
 
 
-@task(name="[DATA] Récupérer load_mode depuis sftp_monitoring")
+@task(name="[CHECK] Verifier si table RAW a des donnees")
+def check_raw_table_has_data(table_name: str) -> bool:
+    """
+    Verifie si la table RAW contient des donnees
+    
+    Returns:
+        True si la table a au moins 1 ligne, False sinon
+    """
+    logger = get_run_logger()
+    conn = psycopg2.connect(config.get_connection_string())
+    cur = conn.cursor()
+    
+    try:
+        raw_table = f"raw.raw_{table_name.lower()}"
+        
+        # Verifier existence table
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'raw'
+                  AND table_name = %s
+            )
+        """, (f"raw_{table_name.lower()}",))
+        
+        table_exists = cur.fetchone()[0]
+        
+        if not table_exists:
+            logger.warning(f"[WARN] Table {raw_table} n'existe pas")
+            return False
+        
+        # Compter lignes
+        cur.execute(f"SELECT COUNT(*) FROM {raw_table}")
+        row_count = cur.fetchone()[0]
+        
+        if row_count == 0:
+            logger.warning(f"[SKIP] Table {raw_table} est vide (0 lignes)")
+            return False
+        
+        logger.info(f"[OK] {raw_table} : {row_count:,} lignes detectees")
+        return True
+        
+    except Exception as e:
+        logger.error(f"[ERROR] Erreur verification {table_name}: {e}")
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+
+@task(name="[DATA] Recuperer load_mode depuis sftp_monitoring")
 def get_load_mode_for_table(table_name: str) -> str:
     """
-    Récupère le load_mode du dernier fichier traité pour une table
+    Recupere le load_mode du dernier fichier traite pour une table
     
     Returns:
         'INCREMENTAL', 'FULL', 'FULL_RESET', ou 'AUTO'
@@ -74,57 +124,82 @@ def get_load_mode_for_table(table_name: str) -> str:
         conn.close()
 
 
-@flow(name="[LIST] RAW → STAGING_ETL (typé + nettoyage + hashdiff + UPSERT)")
+@flow(name="[LIST] RAW to STAGING_ETL (type + nettoyage + hashdiff + UPSERT)")
 def raw_to_staging_flow(
     table_names: Optional[List[str]] = None,
     run_id: Optional[str] = None
 ):
-
     logger = get_run_logger()
 
     if run_id is None:
         from datetime import datetime
         run_id = f"raw_to_staging_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    # Tables RAW à traiter
+    # Tables RAW a traiter
     tables = table_names if table_names else list_raw_tables()
 
-    logger.info(f"[TARGET] {len(tables)} table(s) à traiter")
+    logger.info(f"[TARGET] {len(tables)} table(s) a traiter")
 
     total_rows = 0
     processed = []
+    skipped = []
 
     for table in tables:
-        # [NEW] Récupérer load_mode depuis sftp_monitoring
-        load_mode = get_load_mode_for_table(table)
-        logger.info(f"[MODE] {table} → load_mode: {load_mode}")
-        
-        # Création STAGING (DROP + CREATE si FULL/FULL_RESET)
-        logger.info(f"[CONFIG] Création STAGING {table}")
-        create_staging_table(table)
+        try:
+            # Verifier si table RAW a des donnees
+            if not check_raw_table_has_data(table):
+                logger.warning(f"[SKIP] {table} - Table RAW vide ou inexistante")
+                skipped.append(table)
+                continue  # Passer a la table suivante
+            
+            # Recuperer load_mode depuis sftp_monitoring
+            load_mode = get_load_mode_for_table(table)
+            logger.info(f"[MODE] {table} -> load_mode: {load_mode}")
+            
+            # Creation STAGING (DROP + CREATE si FULL/FULL_RESET)
+            logger.info(f"[CONFIG] Creation STAGING {table}")
+            create_staging_table(table)
 
-        # Chargement avec UPSERT si INCREMENTAL
-        logger.info(f"📥 Chargement RAW → STAGING {table}")
-        rows = load_raw_to_staging(
-            table_name=table,
-            run_id=run_id,
-            load_mode=load_mode  
-        )
+            # Chargement avec UPSERT si INCREMENTAL
+            logger.info(f"[LOAD] Chargement RAW -> STAGING {table}")
+            rows = load_raw_to_staging(
+                table_name=table,
+                run_id=run_id,
+                load_mode=load_mode  
+            )
 
-        total_rows += (rows or 0)
-        processed.append(table)
+            total_rows += (rows or 0)
+            processed.append(table)
 
-        if rows is not None:
-            logger.info(f"[OK] {table} : {rows:,} lignes ({load_mode})")
-        else:
-            logger.warning(f"[SKIP] {table} : Aucune donnée chargée")
+            if rows is not None and rows > 0:
+                logger.info(f"[OK] {table} : {rows:,} lignes ({load_mode})")
+            else:
+                logger.warning(f"[WARN] {table} : Aucune donnee chargee")
+                
+        except Exception as e:
+            logger.error(f"[ERROR] Erreur traitement {table}: {e}")
+            skipped.append(table)
+            continue  # Ne pas bloquer le pipeline
+
+    # Log recapitulatif
+    logger.info("=" * 70)
+    logger.info(f"[OK] Traitement termine")
+    logger.info(f"   [OK] Traitees : {len(processed)} table(s)")
+    logger.info(f"   [SKIP] Skipped : {len(skipped)} table(s)")
+    if skipped:
+        logger.info(f"   [LIST] Tables skipped : {', '.join(skipped)}")
+    logger.info(f"   [DATA] Total lignes : {total_rows:,}")
+    logger.info("=" * 70)
 
     return {
         "tables_processed": len(processed),
+        "tables_skipped": len(skipped),
         "total_rows": total_rows,
         "tables": processed,
+        "skipped_tables": skipped,
         "run_id": run_id
     }
+
 
 if __name__ == "__main__":
     raw_to_staging_flow()

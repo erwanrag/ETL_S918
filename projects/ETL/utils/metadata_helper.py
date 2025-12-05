@@ -479,3 +479,57 @@ if __name__ == "__main__":
             print(f"   PK: {config_table['primary_keys']}")
     
     print("\n" + "=" * 60)
+
+
+
+def get_table_metadata(table_name: str) -> dict:
+    """
+    Recupere les types de colonnes depuis metadata.proginovcolumns
+    
+    Args:
+        table_name: Nom de la table
+        
+    Returns:
+        dict: {
+            'column_name': {
+                'data_type': 'INTEGER',
+                'progress_type': 'integer',
+                'extent': 0
+            }
+        }
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    # Nettoyer le nom de table (enlever prefixes raw_/stg_)
+    clean_table = table_name.split("_", 1)[-1] if "_" in table_name else table_name
+    
+    try:
+        # Chercher dans metadata.proginovcolumns (pas etl_columns)
+        cur.execute("""
+            SELECT 
+                "ColumnName",
+                "DataType",
+                "ProgressType",
+                "Extent"
+            FROM metadata.proginovcolumns
+            WHERE UPPER("TableName") = UPPER(%s)
+        """, (clean_table,))
+        
+        result = {}
+        for row in cur.fetchall():
+            col_name = row[0]
+            result[col_name] = {
+                'data_type': (row[1] or '').upper(),
+                'progress_type': (row[2] or '').upper(),
+                'extent': row[3] or 0
+            }
+        
+        return result
+        
+    except Exception as e:
+        print(f"[WARN] Erreur get_table_metadata pour {table_name}: {e}")
+        return {}
+    finally:
+        cur.close()
+        conn.close()

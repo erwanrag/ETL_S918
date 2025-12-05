@@ -27,6 +27,7 @@ sys.path.append(r'E:\Prefect\projects\ETL')
 from flows.config.pg_config import config
 from utils.file_operations import archive_and_cleanup
 from utils.filename_parser import parse_and_resolve
+from utils.metadata_helper import get_table_metadata
 
 @task(name="[OPEN] Scanner SFTP parquet")
 def scan_sftp_directory():
@@ -209,6 +210,17 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
         
         logger.info(f"[SCHEMA] Lecture schema Parquet")
         parquet_file = pq.ParquetFile(parquet_path)
+        # VERIFIER SI VIDE
+        if parquet_file.num_row_groups == 0 or parquet_file.metadata.num_rows == 0:
+            logger.warning(f"[SKIP] Fichier parquet VIDE : {parquet_path}")
+            return {
+                'rows_loaded': 0,
+                'table_name': table_name,
+                'skipped': True,
+                'reason': 'empty_file'
+            }
+
+        # Sinon, continuer normalement
         df_sample = parquet_file.read_row_group(
             0, 
             columns=parquet_file.schema.names
@@ -221,6 +233,18 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
         
         logger.info(f"[CREATE] CREATE TABLE {full_table}")
         engine = create_engine(config.get_sqlalchemy_url(config.schema_raw))
+        metadata_types = get_table_metadata(names['table_name'])
+
+        if metadata_types:
+            # Convertir les colonnes FLOAT qui doivent être INTEGER
+            for col in df_sample.columns:
+                if col in metadata_types:
+                    expected_type = metadata_types[col]['data_type']
+                    
+                    # Si metadata dit INTEGER mais pandas a float
+                    if expected_type == 'INTEGER' and df_sample[col].dtype == 'float64':
+                        df_sample[col] = df_sample[col].fillna(0).astype('int64')
+
         df_sample.head(0).to_sql(
             name=table_name,
             con=engine,
@@ -234,7 +258,7 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
         # ÉTAPE 5 : COPY données par batches
         # ====================================================================
         
-        logger.info("[COPY] Chargement données (streaming)")
+        logger.info("[COPY] Chargement donnees (streaming)")
         
         col_list = ",".join([f'"{c}"' for c in df_sample.columns])
         copy_sql = (
@@ -245,11 +269,25 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
         batch_size = 50000
         total_rows = 0
         
+        # Identifier colonnes INTEGER depuis metadata
+        integer_cols = set()
+        if metadata_types:
+            for col, col_info in metadata_types.items():
+                if col in df_sample.columns:
+                    expected_type = (col_info.get('progress_type') or col_info.get('data_type') or '').upper()
+                    if expected_type in ('INTEGER', 'INT', 'INT64'):
+                        integer_cols.add(col)
+        
         for i, batch in enumerate(parquet_file.iter_batches(batch_size=batch_size), 1):
             chunk = batch.to_pandas()
             chunk["_loaded_at"] = datetime.now()
             chunk["_source_file"] = file_name
             chunk["_sftp_log_id"] = log_id
+            
+            # Convertir colonnes INTEGER pour ce batch
+            for col in integer_cols:
+                if col in chunk.columns and chunk[col].dtype == 'float64':
+                    chunk[col] = chunk[col].fillna(0).astype('int64')
             
             output = StringIO()
             chunk.to_csv(output, sep="\t", header=False, index=False, na_rep="\\N")
@@ -259,7 +297,7 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
             
             total_rows += len(chunk)
             if i % 10 == 0:
-                logger.info(f"  [{total_rows:,} lignes chargées]")
+                logger.info(f"  [{total_rows:,} lignes chargees]")
         
         conn.commit()
         
@@ -352,24 +390,54 @@ def sftp_to_raw_flow():
             
             log_id = log_file_to_monitoring(f, meta, status)
             result = load_to_raw(f, log_id, meta)
+            
+            # ✅ GESTION DES FICHIERS VIDES/SKIPPED
+            if result.get('skipped', False):
+                logger.warning(f"[SKIP] {table_name} - Raison: {result.get('reason', 'unknown')}")
+                
+                # ✅ Mettre à jour sftp_monitoring
+                conn = psycopg2.connect(config.get_connection_string())
+                cur = conn.cursor()
+                try:
+                    cur.execute("""
+                        UPDATE sftp_monitoring.sftp_file_log
+                        SET processing_status = 'SKIPPED',
+                            error_message = %s,
+                            processed_at = NOW()
+                        WHERE log_id = %s
+                    """, (result.get('reason', 'Fichier vide'), log_id))
+                    conn.commit()
+                finally:
+                    cur.close()
+                    conn.close()
+                
+                # ✅ Archiver quand même le fichier
+                archive_files(f)
+                
+                # ✅ NE PAS ajouter à tables_loaded
+                logger.info(f"[INFO] Fichier archive mais table non creee")
+                continue  # ← Passer au fichier suivant
+            
+            # Si pas skipped, continuer normalement
             archive_files(f)
             
             total_rows += result['rows_loaded']
             tables_loaded.append(result["physical_name"])
             
-            logger.info(f"[OK] Table physique chargée : {result['table_name']}")
+            logger.info(f"[OK] Table physique chargee : {result['physical_name']}")
             
         except Exception as e:
             logger.error(f"[ERROR] Erreur {f} : {e}")
+            # Ne pas bloquer le pipeline pour une table en erreur
+            continue
 
-    logger.info(f"[TARGET] TERMINÉ : {len(tables_loaded)} table(s), {total_rows:,} lignes")
+    logger.info(f"[TARGET] TERMINE : {len(tables_loaded)} table(s), {total_rows:,} lignes")
     
     return {
         "tables_loaded": len(tables_loaded),
         "total_rows": total_rows,
         "tables": tables_loaded
     }
-
 
 if __name__ == "__main__":
     sftp_to_raw_flow()

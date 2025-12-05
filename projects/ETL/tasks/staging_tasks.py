@@ -103,11 +103,10 @@ def create_staging_table(table_name: str):
         cur.close()
         conn.close()
 
-
-@task(name="📥 Charger RAW → STAGING avec nettoyage + hashdiff + UPSERT")
+@task(name="[LOAD] Charger RAW to STAGING avec nettoyage + hashdiff + UPSERT")
 def load_raw_to_staging(table_name: str, run_id: str, load_mode: str = "AUTO"):
     """
-    Charge RAW → STAGING avec UPSERT en mode INCREMENTAL
+    Charge RAW -> STAGING avec UPSERT en mode INCREMENTAL
     
     Args:
         table_name: Nom physique de la table
@@ -128,8 +127,8 @@ def load_raw_to_staging(table_name: str, run_id: str, load_mode: str = "AUTO"):
 
     row = cur.fetchone()
     if row:
-        base_table = row[0]               # colonnes métier
-        physical_name = row[1] or row[0]  # nom physique RAW/STAGING
+        base_table = row[0]
+        physical_name = row[1] or row[0]
     else:
         base_table = table_name
         physical_name = table_name
@@ -141,7 +140,7 @@ def load_raw_to_staging(table_name: str, run_id: str, load_mode: str = "AUTO"):
     logger.info(f"[MODE] Load mode : {load_mode}")
 
     try:
-        # Vérifier existence RAW
+        # Verifier existence RAW
         cur.execute("""
             SELECT EXISTS (
                 SELECT 1 FROM information_schema.tables
@@ -154,20 +153,20 @@ def load_raw_to_staging(table_name: str, run_id: str, load_mode: str = "AUTO"):
             logger.error(f"[ERROR] Table RAW introuvable : {raw_table}")
             return
 
-        # Métadonnées colonnes
+        # Metadonnees colonnes
         cols_meta = get_columns_metadata(base_table)
         business_cols = list(cols_meta.keys())
 
         if not business_cols:
-            logger.error(f"[ERROR] Colonnes non trouvées pour {base_table}")
+            logger.error(f"[ERROR] Colonnes non trouvees pour {base_table}")
             return
 
-        # Récupérer PK
+        # Recuperer PK
         from flows.config.table_metadata import get_primary_keys
         pk_columns = get_primary_keys(base_table)
 
         # ==============================
-        #  Construction SELECT typé
+        #  Construction SELECT type
         # ==============================
         select_exprs = []
 
@@ -242,7 +241,7 @@ END AS "{col}"
         ])
 
         # ==============================
-        #  STRATÉGIE SELON LOAD_MODE
+        #  STRATEGIE SELON LOAD_MODE
         # ==============================
         
         if load_mode in ("FULL", "FULL_RESET"):
@@ -267,7 +266,7 @@ END AS "{col}"
             cur.execute(insert_sql)
             rows_affected = cur.rowcount
             conn.commit()
-            logger.info(f"[OK] {rows_affected:,} lignes insérées (FULL)")
+            logger.info(f"[OK] {rows_affected:,} lignes inserees (FULL)")
             
         else:
             # MODE INCREMENTAL : UPSERT
@@ -292,11 +291,20 @@ END AS "{col}"
                 cur.execute(insert_sql)
                 rows_affected = cur.rowcount
                 conn.commit()
-                logger.info(f"[OK] {rows_affected:,} lignes insérées (no PK)")
+                logger.info(f"[OK] {rows_affected:,} lignes inserees (no PK)")
                 
             else:
-                # UPSERT avec PK
-                pk_join = ' AND '.join([f'target."{pk}" = source."{pk}"' for pk in pk_columns])
+                # CONSTRUIRE pk_join avec CAST pour DATE
+                pk_join_parts = []
+                for pk in pk_columns:
+                    pk_info = cols_meta.get(pk, {})
+                    pt = (pk_info.get("ProgressType") or "").lower()
+                    dt = (pk_info.get("DataType") or "").lower()
+                    
+                    # Si PK est DATE, pas besoin de CAST car source est deja typee
+                    pk_join_parts.append(f'target."{pk}" = source."{pk}"')
+                
+                pk_join = ' AND '.join(pk_join_parts)
                 
                 # 1. INSERT nouveaux
                 insert_sql = f"""
@@ -317,41 +325,92 @@ END AS "{col}"
                 cur.execute(insert_sql)
                 inserted = cur.rowcount
                 conn.commit()
-                logger.info(f"[ADD] {inserted:,} lignes insérées")
+                logger.info(f"[ADD] {inserted:,} lignes inserees")
                 
-                # 2. UPDATE modifiés
+                # 2. UPDATE modifies avec CONVERSIONS TYPEES
                 update_cols = [c for c in business_cols if c not in pk_columns]
                 
                 if update_cols:
-                    set_clause = ', '.join([f'"{col}" = source."{col}"' for col in update_cols])
-                    full_set = f'{set_clause}, "_etl_hashdiff" = source."_etl_hashdiff", "_etl_valid_from" = source."_etl_valid_from", "_etl_run_id" = source."_etl_run_id"'
+                    # Construire sous-requete source avec expressions typees
+                    source_select_parts = []
+                    
+                    for col, info in cols_meta.items():
+                        pt = (info.get("ProgressType") or "").lower()
+                        dt = (info.get("DataType") or "").lower()
+                        extent = info.get("Extent", 0) or 0
+                        source = f'"{col}"'
+                        
+                        # BOOLEAN
+                        if pt in ("logical", "bit") and extent == 0:
+                            expr = f"""CASE 
+    WHEN UPPER(BTRIM({source}::text)) IN ('1','Y','YES','TRUE','OUI') THEN TRUE
+    WHEN UPPER(BTRIM({source}::text)) IN ('0','N','NO','FALSE','NON') THEN FALSE
+    ELSE NULL
+END AS "{col}" """
+                        
+                        # INTEGER
+                        elif (pt in ("integer", "int", "int64") or dt in ("integer", "int")) and extent == 0:
+                            expr = f"NULLIF(BTRIM({source}::text), '')::INTEGER AS \"{col}\""
+                        
+                        # NUMERIC
+                        elif (pt in ("decimal", "numeric") or dt in ("decimal", "numeric")) and extent == 0:
+                            expr = f"NULLIF(BTRIM({source}::text), '')::NUMERIC AS \"{col}\""
+                        
+                        # DATE
+                        elif (pt == "date" or dt == "date") and extent == 0:
+                            expr = f"""CASE 
+    WHEN {source} IN ('', '00/00/00', '00-00-00') THEN NULL
+    ELSE NULLIF(BTRIM({source}::text), '')::DATE
+END AS "{col}" """
+                        
+                        # TIMESTAMP
+                        elif pt in ("datetime", "timestamp") or dt == "timestamp":
+                            expr = f"NULLIF(BTRIM({source}::text), '')::TIMESTAMP AS \"{col}\""
+                        
+                        # TEXT / fallback
+                        else:
+                            expr = f"NULLIF(BTRIM({source}::text), '') AS \"{col}\""
+                        
+                        source_select_parts.append(expr)
+                    
+                    # Ajouter colonnes ETL
+                    source_select_parts.append(hash_expr)
+                    source_select_parts.append("CURRENT_TIMESTAMP AS _etl_valid_from")
+                    source_select_parts.append(f"'{run_id}' AS _etl_run_id")
+                    
+                    source_select_sql = ",\n            ".join(source_select_parts)
+                    
+                    # Construire sous-requete source AVEC les conversions
+                    source_subquery = f"""
+            (SELECT
+                {source_select_sql}
+            FROM {raw_table}) AS source
+                    """
+                    
+                    # SET clause simple
+                    set_parts = [f'"{col}" = source."{col}"' for col in update_cols]
+                    set_parts.append('"_etl_hashdiff" = source."_etl_hashdiff"')
+                    set_parts.append('"_etl_valid_from" = source."_etl_valid_from"')
+                    set_parts.append('"_etl_run_id" = source."_etl_run_id"')
+                    set_clause = ', '.join(set_parts)
+                    
+                    update_sql = f"""
+                UPDATE {stg_table} AS target
+                SET {set_clause}
+                FROM {source_subquery}
+                WHERE {pk_join}
+                  AND target."_etl_hashdiff" != source."_etl_hashdiff"
+                    """
+                    cur.execute(update_sql)
+                    updated = cur.rowcount
+                    conn.commit()
+                    logger.info(f"[SYNC] {updated:,} lignes mises a jour")
+                    
+                    rows_affected = inserted + updated
+                    logger.info(f"[OK] Total : {rows_affected:,} lignes affectees (UPSERT)")
                 else:
-                    full_set = '"_etl_hashdiff" = source."_etl_hashdiff", "_etl_valid_from" = source."_etl_valid_from", "_etl_run_id" = source."_etl_run_id"'
-                
-                # Construire sous-requête source
-                source_subquery = f"""
-                    (SELECT
-                        {', '.join(f'"{c}"' for c in business_cols)},
-                        {hash_expr},
-                        CURRENT_TIMESTAMP AS _etl_valid_from,
-                        '{run_id}' AS _etl_run_id
-                    FROM {raw_table}) AS source
-                """
-                
-                update_sql = f"""
-                    UPDATE {stg_table} AS target
-                    SET {full_set}
-                    FROM {source_subquery}
-                    WHERE {pk_join}
-                      AND target."_etl_hashdiff" != source."_etl_hashdiff"
-                """
-                cur.execute(update_sql)
-                updated = cur.rowcount
-                conn.commit()
-                logger.info(f"[SYNC] {updated:,} lignes mises à jour")
-                
-                rows_affected = inserted + updated
-                logger.info(f"[OK] Total : {rows_affected:,} lignes affectées (UPSERT)")
+                    rows_affected = inserted
+                    logger.info(f"[OK] Total : {rows_affected:,} lignes affectees (INSERT only)")
         
         return rows_affected
 
