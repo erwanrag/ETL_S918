@@ -20,6 +20,8 @@ from flows.config.pg_config import config
 from tasks.ods_tasks import merge_ods_auto, verify_ods_after_merge
 
 
+
+
 @task(name="[DATA] Lister tables STAGING")
 def list_staging_tables():
     """Liste toutes les tables staging_etl.stg_*"""

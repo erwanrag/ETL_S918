@@ -329,9 +329,8 @@ def load_raw_to_staging(table_name: str, run_id: str, load_mode: str = "AUTO"):
             # Construire hashdiff sur les colonnes DÉJÀ éclatées (de la sous-requête interne)
             # [CRITICAL] Ajouter des guillemets pour respecter la casse PostgreSQL
             if len(expanded_columns) <= 95:
-                hash_parts = [f"COALESCE(CAST(\"{col}\" AS TEXT), '')" for col in expanded_columns]
-                hash_concat = ", ".join(hash_parts)
-                hash_calc = f"MD5(CONCAT_WS('|', {hash_concat}))"
+                business_cols_str = ', '.join([f'"{col}"' for col in expanded_columns])
+                hash_calc = f"MD5(ROW({business_cols_str})::TEXT)"
             else:
                 chunk_size = 95
                 chunks = []
@@ -407,8 +406,8 @@ END AS "{col}" """
 
             # Hashdiff
             if len(business_cols) <= 95:
-                hash_concat = ", ".join([f"COALESCE(\"{c}\"::text, '')" for c in business_cols])
-                hash_expr = f"MD5(CONCAT_WS('|', {hash_concat})) AS _etl_hashdiff"
+                business_cols_str = ', '.join([f'"{c}"' for c in business_cols])
+                hash_expr = f"MD5(ROW({business_cols_str})::TEXT) AS _etl_hashdiff"
             else:
                 chunk_size = 95
                 chunks = []
