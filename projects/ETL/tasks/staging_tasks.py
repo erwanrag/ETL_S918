@@ -27,16 +27,65 @@ from utils.extent_handler import (
 )
 
 
+def _should_recreate_staging_table(
+    cur, 
+    table_name: str, 
+    load_mode: str,
+    logger
+) -> bool:
+    """
+    Détermine si la table STAGING doit être DROP/CREATE
+    
+    Returns:
+        True si doit être recréée
+        False si peut être réutilisée
+    """
+    
+    if load_mode not in ("INCREMENTAL", "AUTO"):
+        # Mode FULL : toujours recréer
+        return True
+    
+    stg_table = f"stg_{table_name.lower()}"
+    
+    # Vérifier si table existe
+    cur.execute("""
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'staging_etl' 
+            AND table_name = %s
+        )
+    """, (stg_table,))
+    
+    table_exists = cur.fetchone()[0]
+    
+    if not table_exists:
+        logger.info(f"[CREATE] Table {stg_table} n'existe pas → création")
+        return True
+    
+    # Table existe, vérifier colonnes critiques
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM information_schema.columns 
+        WHERE table_schema = 'staging_etl' 
+          AND table_name = %s
+          AND column_name IN ('_etl_hashdiff', '_etl_valid_from', '_etl_run_id')
+    """, (stg_table,))
+    
+    critical_cols_count = cur.fetchone()[0]
+    
+    if critical_cols_count < 3:
+        logger.warning(f"[REBUILD] Colonnes ETL manquantes → recréation")
+        return True
+    
+    # Tout est OK, pas besoin de recréer
+    logger.info(f"[SKIP CREATE] Table {stg_table} existe et valide → réutilisation")
+    return False
+
 @task(name="[BUILD] Créer table STAGING typée (avec extent éclaté)")
 def create_staging_table(table_name: str, load_mode: str = "AUTO"):
     """
     Crée staging_etl.stg_{table_name} à partir de metadata
-    [NEW] Si extent présent → Éclate les colonnes extent
-    
-    Args:
-        table_name: Peut être:
-            - 'client' (simple)
-            - 'lisval_fou_production' (avec ConfigName)
+    [OPTIMISÉ] Skip DROP/CREATE si table existe et mode INCREMENTAL
     """
     logger = get_run_logger()
     logger.info(f"[CONFIG] table={table_name}, mode={load_mode}")
@@ -74,6 +123,14 @@ def create_staging_table(table_name: str, load_mode: str = "AUTO"):
     logger.info(f"[CONFIG] table={table_name} → base={base_table}, physical={physical_name}")
 
     try:
+        # ✅ OPTIMISATION : Vérifier si recréation nécessaire
+        if not _should_recreate_staging_table(cur, physical_name, load_mode, logger):
+            # Table OK, skip création
+            cur.close()
+            conn.close()
+            return
+        
+        # Si on arrive ici, il faut créer la table
         cols_meta = get_columns_metadata(base_table)
         if not cols_meta:
             logger.error(f"[ERROR] Aucune metadata colonnes pour {base_table}")

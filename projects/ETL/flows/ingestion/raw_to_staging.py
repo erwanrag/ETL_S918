@@ -200,6 +200,69 @@ def raw_to_staging_flow(
         "run_id": run_id
     }
 
+@task(name="[STAGING] Traiter table individuelle", retries=1)
+def raw_to_staging_single_table(table_name: str, run_id: str) -> dict:
+    """
+    Traite UNE SEULE table RAW → STAGING
+    """
+    logger = get_run_logger()
+    
+    try:
+        # Vérifier si RAW a des données
+        conn = psycopg2.connect(config.get_connection_string())
+        cur = conn.cursor()
+        
+        raw_table = f"raw.raw_{table_name.lower()}"
+        cur.execute(f"SELECT COUNT(*) FROM {raw_table}")
+        row_count = cur.fetchone()[0]
+        
+        cur.close()
+        conn.close()
+        
+        if row_count == 0:
+            logger.warning(f"[SKIP] {table_name} : Aucune donnée dans RAW")
+            return {
+                'table': table_name,
+                'rows': 0,
+                'status': 'skipped'
+            }
+        
+        logger.info(f"[OK] {table_name} : {row_count:,} lignes détectées")
+        
+        # ✅ FIX : Utiliser get_load_mode_for_table au lieu de get_load_mode_from_monitoring
+        load_mode = get_load_mode_for_table(table_name)
+        logger.info(f"[MODE] {table_name} -> {load_mode}")
+        
+        # Créer table STAGING (avec skip si existe)
+        create_staging_table(table_name, load_mode)
+        
+        # Charger RAW → STAGING
+        rows_affected = load_raw_to_staging(table_name, run_id, load_mode)
+        
+        if rows_affected == 0:
+            logger.warning(f"[WARN] {table_name} : Aucune donnée chargée")
+        else:
+            logger.info(f"[OK] {table_name} : {rows_affected:,} lignes ({load_mode})")
+        
+        return {
+            'table': table_name,
+            'rows': rows_affected or 0,
+            'status': 'success',
+            'load_mode': load_mode
+        }
+        
+    except Exception as e:
+        logger.error(f"[ERROR] {table_name} : {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+        return {
+            'table': table_name,
+            'rows': 0,
+            'status': 'error',
+            'error': str(e)
+        }
+
 
 if __name__ == "__main__":
     raw_to_staging_flow()

@@ -373,10 +373,16 @@ def sftp_to_raw_flow():
 
     if not files:
         logger.info("[INFO] Aucun fichier parquet")
-        return {"tables_loaded": 0, "total_rows": 0}
+        return {
+            "tables_loaded": 0, 
+            "total_rows": 0,
+            "tables": [],
+            "table_sizes": {}  # ✅ AJOUT
+        }
 
     total_rows = 0
     tables_loaded = []
+    table_sizes = {}  # ✅ AJOUT : {table_name: row_count}
     
     for f in files:
         try:
@@ -388,6 +394,8 @@ def sftp_to_raw_flow():
                 continue
             
             table_name = meta.get('table_name', 'unknown')
+            row_count = status.get('row_count', 0) if status else 0  
+            
             logger.info(f"[TARGET] Traitement de {table_name}")
             
             log_id = log_file_to_monitoring(f, meta, status)
@@ -425,9 +433,17 @@ def sftp_to_raw_flow():
             archive_files(f)
             
             total_rows += result['rows_loaded']
-            tables_loaded.append(result["physical_name"])
             
-            logger.info(f"[OK] Table physique chargee : {result['physical_name']}")
+            physical_name = result["physical_name"]
+            tables_loaded.append(physical_name)
+            
+            # ✅ STOCKER LA TAILLE (utiliser max si doublons)
+            if physical_name in table_sizes:
+                table_sizes[physical_name] = max(table_sizes[physical_name], row_count)
+            else:
+                table_sizes[physical_name] = row_count
+            
+            logger.info(f"[OK] Table physique chargee : {physical_name}")
             
         except Exception as e:
             logger.error(f"[ERROR] Erreur {f} : {e}")
@@ -439,7 +455,8 @@ def sftp_to_raw_flow():
     return {
         "tables_loaded": len(tables_loaded),
         "total_rows": total_rows,
-        "tables": tables_loaded
+        "tables": tables_loaded,
+        "table_sizes": table_sizes  
     }
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from prefect import flow, task
 from prefect.logging import get_run_logger
 from typing import Optional, List
 import sys
+import psycopg2
 
 sys.path.append(r'E:\Prefect\projects\ETL')
 from flows.config.pg_config import config
@@ -177,6 +178,72 @@ def staging_to_ods_flow(
         "skipped_tables": tables_skipped,
         "run_id": run_id
     }
+
+@task(name="[ODS] Merge table individuelle", retries=1)
+def staging_to_ods_single_table(table_name: str, run_id: str, load_mode: str = "AUTO") -> dict:
+    """
+    Merge UNE SEULE table STAGING → ODS
+    Utilisé pour parallélisation avec .map()
+    
+    Returns:
+        {
+            'table': str,
+            'rows': int,
+            'status': 'success' | 'error' | 'skipped',
+            'error': str (optionnel)
+        }
+    """
+    logger = get_run_logger()
+    
+    try:
+        # Vérifier si STAGING a des données
+        conn = psycopg2.connect(config.get_connection_string())
+        cur = conn.cursor()
+        
+        stg_table = f"staging_etl.stg_{table_name.lower()}"
+        cur.execute(f"SELECT COUNT(*) FROM {stg_table}")
+        row_count = cur.fetchone()[0]
+        
+        cur.close()
+        conn.close()
+        
+        if row_count == 0:
+            logger.warning(f"[SKIP] {table_name} : Aucune donnée dans STAGING")
+            return {
+                'table': table_name,
+                'rows': 0,
+                'status': 'skipped'
+            }
+        
+        logger.info(f"[TARGET] Merge de {table_name} ({load_mode})")
+        
+        # Merger
+        result = merge_ods_auto(table_name, run_id, load_mode)
+        
+        # Vérifier
+        verify_result = verify_ods_after_merge(table_name, run_id)
+        
+        rows_affected = result.get('rows_affected', 0)
+        logger.info(f"[OK] {table_name} : {rows_affected:,} lignes affectées")
+        
+        return {
+            'table': table_name,
+            'rows': rows_affected,
+            'status': 'success',
+            'mode': result.get('mode', load_mode)
+        }
+        
+    except Exception as e:
+        logger.error(f"[ERROR] {table_name} : {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+        return {
+            'table': table_name,
+            'rows': 0,
+            'status': 'error',
+            'error': str(e)
+        }
 
 if __name__ == "__main__":
     staging_to_ods_flow()
