@@ -124,6 +124,20 @@ def merge_ods_full_reset(table_name: str, run_id: str):
                 logger.warning(f"[WARN] Impossible de créer PK : {e}")
                 conn.rollback()
         
+        # Créer index UPSERT (PK + hashdiff)
+        if pk_columns:
+            pk_list = ', '.join([f'"{col}"' for col in pk_columns])
+            try:
+                cur.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_{table_name.lower()}_upsert
+                    ON {ods_table} ({pk_list}, _etl_hashdiff)
+                """)
+                conn.commit()
+                logger.info(f"[INDEX] Index UPSERT créé")
+            except Exception as e:
+                logger.warning(f"[WARN] Index UPSERT : {e}")
+                conn.rollback()
+
         # Créer index sur _etl_valid_from
         try:
             cur.execute(f"""

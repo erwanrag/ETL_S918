@@ -2,9 +2,8 @@ version: 2
 
 sources:
   - name: ods
+    database: etl_db
     schema: ods
-    description: "Operational Data Store - Tables ODS avec colonnes extent éclatées"
-    
     tables:
       - name: clcondi
         description: "Conditions clients"

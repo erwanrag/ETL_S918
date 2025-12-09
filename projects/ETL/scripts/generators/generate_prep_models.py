@@ -38,7 +38,7 @@ from collections import defaultdict
 import sys
 
 # Ajout du chemin projet
-sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).parent.parent.parent))
 from flows.config.pg_config import config
 
 
@@ -720,13 +720,13 @@ Exemples:
     print("=" * 70)
     
     # Markdown
-    md_file = output_dir.parent.parent / "PREP_ANALYSIS_REPORT.md"
+    md_file = Path(config.dbt_project_dir) / "PREP_ANALYSIS_REPORT.md"
     with open(md_file, 'w', encoding='utf-8') as f:
         f.write(ReportGenerator.generate_markdown(all_reports))
     print(f"  ✅ Markdown : {md_file}")
     
     # JSON
-    json_file = output_dir.parent.parent / "PREP_ANALYSIS_REPORT.json"
+    json_file = Path(config.dbt_project_dir) / "PREP_ANALYSIS_REPORT.json"
     ReportGenerator.generate_json(all_reports, json_file)
     print(f"  ✅ JSON     : {json_file}")
     

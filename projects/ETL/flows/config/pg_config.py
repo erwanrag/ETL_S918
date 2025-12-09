@@ -108,7 +108,7 @@ class PostgreSQLConfig:
     # dbt project
     dbt_project_dir: str = os.getenv(
         "ETL_DBT_PROJECT", 
-        r"E:\Prefect\projects\ETL\dbt\cbm_analytics"
+        r"E:\Prefect\projects\ETL\dbt\etl_db"
     )
     
     # -------------------------------------------------------------------------
