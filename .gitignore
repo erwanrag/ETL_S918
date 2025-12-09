@@ -68,3 +68,9 @@ Thumbs.db
 **/*_local.py
 **/*_LOCAL.py
 **/*_BACKUP.py
+
+
+# ---------------------
+# SERVICES / CURRENCY RATES
+# ---------------------
+projects/services/config/pg_config.py
