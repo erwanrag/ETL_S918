@@ -300,6 +300,8 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
                 logger.info(f"  [{total_rows:,} lignes chargees]")
         
         conn.commit()
+
+
         
         logger.info("="*80)
         logger.info(f"✅ SUCCESS")
@@ -407,6 +409,7 @@ def sftp_to_raw_flow():
                         WHERE log_id = %s
                     """, (result.get('reason', 'Fichier vide'), log_id))
                     conn.commit()
+
                 finally:
                     cur.close()
                     conn.close()

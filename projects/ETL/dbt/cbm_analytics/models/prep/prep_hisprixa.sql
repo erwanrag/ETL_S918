@@ -1,8 +1,23 @@
 {{ config(materialized='view') }}
 
 /*
-    Modèle PREP pour hisprixa
-    Généré automatiquement depuis ODS pour inclure les colonnes éclataées (Extent)
+    ============================================================================
+    Modèle PREP : hisprixa
+    ============================================================================
+    Généré automatiquement le 2025-12-05 15:23:49
+    
+    Source       : ods.hisprixa
+    Lignes       : 114,751
+    Colonnes ODS : 53
+    Colonnes PREP: 8
+    Exclues      : 45 (84.9%)
+    
+    Exclusions:
+      - Techniques ETL  : 7
+      - 100% NULL       : 36
+      - Constantes      : 1
+      - Faible valeur   : 1
+    ============================================================================
 */
 
 SELECT
@@ -10,53 +25,8 @@ SELECT
     "cod_fou" AS cod_fou,
     "dat_px" AS dat_px,
     "px_refa" AS px_refa,
-    "qte_1" AS qte_1,
-    "qte_2" AS qte_2,
-    "qte_3" AS qte_3,
-    "qte_4" AS qte_4,
-    "qte_5" AS qte_5,
-    "px_ach_1" AS px_ach_1,
-    "px_ach_2" AS px_ach_2,
-    "px_ach_3" AS px_ach_3,
-    "px_ach_4" AS px_ach_4,
-    "px_ach_5" AS px_ach_5,
     "usr_mod" AS usr_mod,
     "dat_mod" AS dat_mod,
-    "depot" AS depot,
-    "qte_rq_1" AS qte_rq_1,
-    "qte_rq_2" AS qte_rq_2,
-    "qte_rq_3" AS qte_rq_3,
-    "qte_rq_4" AS qte_rq_4,
-    "qte_rq_5" AS qte_rq_5,
-    "qte_rq_6" AS qte_rq_6,
-    "qte_rq_7" AS qte_rq_7,
-    "qte_rq_8" AS qte_rq_8,
-    "qte_rq_9" AS qte_rq_9,
-    "qte_rq_10" AS qte_rq_10,
-    "px_ach_rq_1" AS px_ach_rq_1,
-    "px_ach_rq_2" AS px_ach_rq_2,
-    "px_ach_rq_3" AS px_ach_rq_3,
-    "px_ach_rq_4" AS px_ach_rq_4,
-    "px_ach_rq_5" AS px_ach_rq_5,
-    "px_ach_rq_6" AS px_ach_rq_6,
-    "px_ach_rq_7" AS px_ach_rq_7,
-    "px_ach_rq_8" AS px_ach_rq_8,
-    "px_ach_rq_9" AS px_ach_rq_9,
-    "px_ach_rq_10" AS px_ach_rq_10,
-    "TabPart_hisprixa" AS tabpart_hisprixa,
-    "flag_repli" AS flag_repli,
-    "zon_lib_1" AS zon_lib_1,
-    "zon_lib_2" AS zon_lib_2,
-    "zon_lib_3" AS zon_lib_3,
-    "zon_lib_4" AS zon_lib_4,
-    "zon_lib_5" AS zon_lib_5,
     "hr_mod" AS hr_mod,
-    "_etl_loaded_at" AS _etl_loaded_at,
-    "_etl_updated_at" AS _etl_updated_at,
-    "_etl_run_id" AS _etl_run_id,
-    "_etl_source" AS _etl_source,
-    "_etl_hashdiff" AS _etl_hashdiff,
-    "_etl_is_active" AS _etl_is_active,
-    "_etl_valid_from" AS _etl_valid_from,
-    "_etl_valid_to" AS _etl_valid_to
+    "_etl_run_id" AS _etl_run_id
 FROM {{ source('ods', 'hisprixa') }}

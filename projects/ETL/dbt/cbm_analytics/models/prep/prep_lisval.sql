@@ -1,8 +1,23 @@
 {{ config(materialized='view') }}
 
 /*
-    Modèle PREP pour lisval
-    Généré automatiquement depuis ODS pour inclure les colonnes éclataées (Extent)
+    ============================================================================
+    Modèle PREP : lisval
+    ============================================================================
+    Généré automatiquement le 2025-12-05 15:33:58
+    
+    Source       : ods.lisval
+    Lignes       : 0
+    Colonnes ODS : 85
+    Colonnes PREP: 78
+    Exclues      : 7 (8.2%)
+    
+    Exclusions:
+      - Techniques ETL  : 7
+      - 100% NULL       : 0
+      - Constantes      : 0
+      - Faible valeur   : 0
+    ============================================================================
 */
 
 SELECT
@@ -83,12 +98,5 @@ SELECT
     "uniq_id" AS uniq_id,
     "TabPart_lisval" AS tabpart_lisval,
     "flag_repli" AS flag_repli,
-    "_etl_loaded_at" AS _etl_loaded_at,
-    "_etl_updated_at" AS _etl_updated_at,
-    "_etl_run_id" AS _etl_run_id,
-    "_etl_source" AS _etl_source,
-    "_etl_hashdiff" AS _etl_hashdiff,
-    "_etl_is_active" AS _etl_is_active,
-    "_etl_valid_from" AS _etl_valid_from,
-    "_etl_valid_to" AS _etl_valid_to
+    "_etl_run_id" AS _etl_run_id
 FROM {{ source('ods', 'lisval') }}

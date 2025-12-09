@@ -1,115 +1,30 @@
 {{ config(materialized='view') }}
 
 /*
-    Modèle PREP pour deppro
-    Généré automatiquement depuis ODS pour inclure les colonnes éclataées (Extent)
+    ============================================================================
+    Modèle PREP : deppro
+    ============================================================================
+    Généré automatiquement le 2025-12-05 15:23:36
+    
+    Source       : ods.deppro
+    Lignes       : 2,803,213
+    Colonnes ODS : 106
+    Colonnes PREP: 6
+    Exclues      : 100 (94.3%)
+    
+    Exclusions:
+      - Techniques ETL  : 7
+      - 100% NULL       : 40
+      - Constantes      : 53
+      - Faible valeur   : 0
+    ============================================================================
 */
 
 SELECT
     "cod_pro" AS cod_pro,
     "depot" AS depot,
     "cod_fou" AS cod_fou,
-    "dat_prin" AS dat_prin,
     "principa" AS principa,
-    "px_mini" AS px_mini,
-    "ges_emp" AS ges_emp,
-    "ges_smp" AS ges_smp,
-    "achat" AS achat,
-    "fam_cpt" AS fam_cpt,
-    "prod_gp" AS prod_gp,
-    "ndos" AS ndos,
-    "pmp" AS pmp,
-    "d_pxach" AS d_pxach,
-    "dat_ent" AS dat_ent,
-    "px_rvt" AS px_rvt,
-    "coef_av" AS coef_av,
-    "dpx_rvt" AS dpx_rvt,
-    "magasin" AS magasin,
-    "emplac" AS emplac,
-    "mini" AS mini,
-    "maxi" AS maxi,
-    "dep_qua" AS dep_qua,
-    "mini_vte" AS mini_vte,
-    "mult_vte" AS mult_vte,
-    "pp_uv" AS pp_uv,
-    "classe" AS classe,
-    "coef_dep" AS coef_dep,
-    "del_liv" AS del_liv,
-    "del_mad" AS del_mad,
-    "prefixe" AS prefixe,
     "ach_ctr" AS ach_ctr,
-    "px_std" AS px_std,
-    "dep_uniq" AS dep_uniq,
-    "px_refv" AS px_refv,
-    "fpx_refv" AS fpx_refv,
-    "dat_fpxv" AS dat_fpxv,
-    "typ_sta" AS typ_sta,
-    "ctrl_qua" AS ctrl_qua,
-    "er_for" AS er_for,
-    "er_n" AS er_n,
-    "er_pon" AS er_pon,
-    "er_var_1" AS er_var_1,
-    "er_var_2" AS er_var_2,
-    "er_var_3" AS er_var_3,
-    "dgc" AS dgc,
-    "fpx_mini" AS fpx_mini,
-    "chg_jour" AS chg_jour,
-    "res_qua" AS res_qua,
-    "typ_ctr" AS typ_ctr,
-    "nb_ctr" AS nb_ctr,
-    "px_std2" AS px_std2,
-    "px_std3" AS px_std3,
-    "px_sim" AS px_sim,
-    "px_ttc" AS px_ttc,
-    "er_coef" AS er_coef,
-    "er_div_1" AS er_div_1,
-    "er_div_2" AS er_div_2,
-    "er_div_3" AS er_div_3,
-    "er_div_4" AS er_div_4,
-    "er_div_5" AS er_div_5,
-    "er_div_6" AS er_div_6,
-    "er_div_7" AS er_div_7,
-    "er_div_8" AS er_div_8,
-    "er_div_9" AS er_div_9,
-    "er_div_10" AS er_div_10,
-    "f_mv" AS f_mv,
-    "f_uv" AS f_uv,
-    "f_cv" AS f_cv,
-    "prc_perte" AS prc_perte,
-    "vocal_1" AS vocal_1,
-    "vocal_2" AS vocal_2,
-    "vocal_3" AS vocal_3,
-    "vocal_4" AS vocal_4,
-    "vocal_5" AS vocal_5,
-    "vocal_6" AS vocal_6,
-    "des_voc" AS des_voc,
-    "detrompeur" AS detrompeur,
-    "ges_ade" AS ges_ade,
-    "fam_sto" AS fam_sto,
-    "reg_sto" AS reg_sto,
-    "ges_rot" AS ges_rot,
-    "TabPart_deppro" AS tabpart_deppro,
-    "flag_repli" AS flag_repli,
-    "enc_db" AS enc_db,
-    "hr_nb" AS hr_nb,
-    "collection" AS collection,
-    "art_remp" AS art_remp,
-    "dat_remp" AS dat_remp,
-    "stat_remp" AS stat_remp,
-    "art_ref" AS art_ref,
-    "stk_mini" AS stk_mini,
-    "stk_maxi" AS stk_maxi,
-    "classm" AS classm,
-    "fam_sai" AS fam_sai,
-    "nbsem_na" AS nbsem_na,
-    "nbsem_eca" AS nbsem_eca,
-    "prc_turb" AS prc_turb,
-    "_etl_loaded_at" AS _etl_loaded_at,
-    "_etl_updated_at" AS _etl_updated_at,
-    "_etl_run_id" AS _etl_run_id,
-    "_etl_source" AS _etl_source,
-    "_etl_hashdiff" AS _etl_hashdiff,
-    "_etl_is_active" AS _etl_is_active,
-    "_etl_valid_from" AS _etl_valid_from,
-    "_etl_valid_to" AS _etl_valid_to
+    "_etl_run_id" AS _etl_run_id
 FROM {{ source('ods', 'deppro') }}

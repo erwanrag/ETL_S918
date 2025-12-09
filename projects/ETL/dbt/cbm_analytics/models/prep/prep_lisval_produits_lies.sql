@@ -2,28 +2,28 @@
 
 /*
     ============================================================================
-    Modèle PREP : lldespro
+    Modèle PREP : lisval_produits_lies
     ============================================================================
-    Généré automatiquement le 2025-12-05 15:34:14
+    Généré automatiquement le 2025-12-05 15:33:58
     
-    Source       : ods.lldespro
-    Lignes       : 551,535
-    Colonnes ODS : 9
+    Source       : ods.lisval_produits_lies
+    Lignes       : 4,452
+    Colonnes ODS : 80
     Colonnes PREP: 5
-    Exclues      : 4 (44.4%)
+    Exclues      : 75 (93.8%)
     
     Exclusions:
       - Techniques ETL  : 2
-      - 100% NULL       : 1
-      - Constantes      : 1
+      - 100% NULL       : 35
+      - Constantes      : 38
       - Faible valeur   : 0
     ============================================================================
 */
 
 SELECT
-    "cod_pro" AS cod_pro,
-    "langue" AS langue,
-    "des_lan" AS des_lan,
-    "des_lan2" AS des_lan2,
+    "cod_tiers" AS cod_tiers,
+    "zt0" AS zt0,
+    "ze0" AS ze0,
+    "uniq_id" AS uniq_id,
     "_etl_run_id" AS _etl_run_id
-FROM {{ source('ods', 'lldespro') }}
+FROM {{ source('ods', 'lisval_produits_lies') }}

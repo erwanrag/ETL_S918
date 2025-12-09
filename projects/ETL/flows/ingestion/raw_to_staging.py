@@ -158,7 +158,7 @@ def raw_to_staging_flow(
             
             # Creation STAGING (DROP + CREATE si FULL/FULL_RESET)
             logger.info(f"[CONFIG] Creation STAGING {table}")
-            create_staging_table(table)
+            create_staging_table(table, load_mode=load_mode)
 
             # Chargement avec UPSERT si INCREMENTAL
             logger.info(f"[LOAD] Chargement RAW -> STAGING {table}")

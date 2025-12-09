@@ -1,12 +1,9 @@
 """
 ============================================================================
-ODS Tasks - STAGING → ODS avec extent éclaté et typage intelligent
+ODS Tasks - STAGING → ODS SIMPLIFIÉ (extent déjà éclaté dans STAGING)
 ============================================================================
-VERSION AMÉLIORÉE avec :
-[OK] Éclatement extent avec types corrects (pas tout TEXT)
-[OK] Commentaires SQL depuis métadonnées
-[OK] Gestion NULL intelligente
-[OK] Primary keys et index automatiques
+[SIMPLIFIÉ] Plus besoin d'éclater extent (déjà fait dans STAGING)
+[OK] INCREMENTAL fonctionne maintenant avec extent !
 [OK] Support FULL, INCREMENTAL, FULL_RESET
 ============================================================================
 """
@@ -23,14 +20,6 @@ from flows.config.table_metadata import (
     has_primary_key, 
     should_force_full,
     get_table_description
-)
-
-# [NEW] Import version améliorée extent_handler
-from utils.extent_handler import (
-    has_extent_columns,
-    build_ods_select_with_extent_typed,
-    generate_column_comments,
-    get_extent_columns_with_metadata
 )
 
 
@@ -67,87 +56,11 @@ def get_load_mode_from_monitoring(table_name: str) -> str:
         conn.close()
 
 
-def add_primary_key_and_indexes(table_name: str, schema: str = 'ods'):
-    """
-    [NEW] Ajouter PRIMARY KEY et INDEX après création ODS
-    
-    Lit metadata.proginovindexes pour créer les bonnes contraintes
-    """
-    conn = psycopg2.connect(config.get_connection_string())
-    cur = conn.cursor()
-    logger = get_run_logger()
-    
-    try:
-        # 1. Ajouter PRIMARY KEY si défini
-        pk_columns = get_primary_keys(table_name)
-        
-        if pk_columns:
-            # Vérifier que les colonnes PK existent bien dans ODS
-            cur.execute(f"""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_schema = %s 
-                  AND table_name = %s
-                  AND column_name = ANY(%s)
-            """, (schema, table_name.lower(), pk_columns))
-            
-            existing_pk_cols = [row[0] for row in cur.fetchall()]
-            
-            if len(existing_pk_cols) == len(pk_columns):
-                pk_cols_str = ', '.join([f'"{col}"' for col in pk_columns])
-                
-                try:
-                    logger.info(f"[KEY] Création PRIMARY KEY ({', '.join(pk_columns)})")
-                    cur.execute(f"""
-                        ALTER TABLE {schema}.{table_name.lower()}
-                        ADD PRIMARY KEY ({pk_cols_str})
-                    """)
-                    conn.commit()
-                    logger.info(f"[OK] PRIMARY KEY créée")
-                except Exception as e:
-                    logger.warning(f"[WARN] Impossible de créer PK : {e}")
-                    conn.rollback()
-            else:
-                logger.warning(f"[WARN] Colonnes PK manquantes : {set(pk_columns) - set(existing_pk_cols)}")
-        
-        # 2. Créer index sur colonnes métier importantes
-        # On peut lire metadata.proginovindexes ici si besoin
-        # Pour l'instant, on crée des index basiques sur _etl_valid_from
-        
-        try:
-            cur.execute(f"""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_schema = %s 
-                  AND table_name = %s
-                  AND column_name = '_etl_valid_from'
-            """, (schema, table_name.lower()))
-            
-            if cur.fetchone():
-                logger.info(f"[INDEX] Création INDEX sur _etl_valid_from")
-                cur.execute(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{table_name.lower()}_etl_valid_from
-                    ON {schema}.{table_name.lower()} (_etl_valid_from)
-                """)
-                conn.commit()
-                logger.info(f"[OK] INDEX créé")
-        except Exception as e:
-            logger.warning(f"[WARN] Impossible de créer INDEX : {e}")
-            conn.rollback()
-        
-    finally:
-        cur.close()
-        conn.close()
-
 @task(name="[SAVE] Merge ODS (FULL RESET)", retries=1)
 def merge_ods_full_reset(table_name: str, run_id: str):
     """
-    [NEW] Mode FULL RESET : DROP + CREATE + INSERT
-    
-    [OK] GÈRE EXTENT : Éclate avec types corrects + commentaires SQL
-    [OK] CREATE TABLE EXPLICITE : Garantit types corrects (NUMERIC, DATE, BOOLEAN)
-    [OK] PRIMARY KEY : Ajoute automatiquement
-    [OK] COMMENTAIRES : Depuis métadonnées Label
+    Mode FULL RESET : DROP + CREATE + INSERT
+    [SIMPLIFIÉ] Copie simple de STAGING (extent déjà éclaté)
     """
     logger = get_run_logger()
     logger.info(f"[SAVE] Merge ODS FULL RESET pour {table_name}")
@@ -170,8 +83,7 @@ def merge_ods_full_reset(table_name: str, run_id: str):
                 "mode": "FULL_RESET",
                 "rows_inserted": 0,
                 "rows_affected": 0,
-                "source_count": 0,
-                "extent_expanded": False
+                "source_count": 0
             }
         
         # DROP table ODS
@@ -179,110 +91,50 @@ def merge_ods_full_reset(table_name: str, run_id: str):
         cur.execute(f"DROP TABLE IF EXISTS {ods_table} CASCADE")
         conn.commit()
         
-        # Récupérer colonnes staging
+        # [SIMPLIFIÉ] Créer ODS comme copie EXACTE de STAGING
+        logger.info(f"[CREATE] CREATE {ods_table} (copie structure STAGING)")
         cur.execute(f"""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_schema = 'staging_etl' 
-              AND table_name = 'stg_{table_name.lower()}'
-            ORDER BY ordinal_position
+            CREATE TABLE {ods_table} AS 
+            SELECT * FROM {src_table} 
+            WHERE FALSE
         """)
-        staging_columns = [row[0] for row in cur.fetchall()]
+        conn.commit()
+        logger.info(f"[OK] Table {ods_table} créée")
         
-        # ============================================================
-        # [NEW] EXTENT : CREATE TABLE explicite avec types corrects
-        # ============================================================
-        if has_extent_columns(table_name):
-            logger.info(f"[MERGE] Table avec colonnes EXTENT détectée")
-            
-            # Construire SELECT avec typage + cast
-            select_clause, ods_columns, column_types = build_ods_select_with_extent_typed(
-                table_name,
-                staging_columns
-            )
-            # 🐛 DEBUG
-            logger.info(f"[SEARCH] DEBUT column_types sample:")
-            for k, v in list(column_types.items())[:15]:
-                logger.info(f"     {k}: {v}")
-            logger.info(f"[SEARCH] FIN column_types")
-            logger.info(f"[DATA] {len(staging_columns)} colonnes staging → {len(ods_columns)} colonnes ODS")
-            logger.info(f"[STYLE] {len(column_types)} colonnes typées")
-            
-            # [NEW] Importer fonction DDL
-            from utils.ddl_generator import generate_ods_extent_table_ddl, generate_ods_indexes_ddl
-            
-            # [NEW] CREATE TABLE EXPLICITE avec types corrects
-            logger.info(f"[TOOLS] CREATE TABLE {ods_table} avec types explicites")
-            create_ddl = generate_ods_extent_table_ddl(
-                table_name,
-                ods_columns,
-                column_types
-            )
-            
-            cur.execute(create_ddl)
-            conn.commit()
-            logger.info(f"[OK] Table créée avec types corrects")
-            
-            # [NEW] INSERT INTO ... SELECT avec conversions
-            logger.info(f"📥 INSERT données avec conversions")
-            common_cols = [c for c in staging_columns if c in ods_columns]
-            cols_str = ', '.join(f'"{c}"' for c in common_cols)
-
-            insert_sql = f"""
-                INSERT INTO {ods_table} ({cols_str})
-                SELECT {cols_str}
-                FROM {src_table}
-            """
-            cur.execute(insert_sql)
-            rows_inserted = cur.rowcount
-            conn.commit()
-            logger.info(f"[OK] {rows_inserted:,} lignes insérées")
-            
-            # Ajouter commentaires SQL
-            logger.info(f"[NOTE] Ajout commentaires SQL")
-            comments = generate_column_comments(table_name, schema='ods')
-            for comment_sql in comments:
-                try:
-                    cur.execute(comment_sql)
-                except Exception as e:
-                    logger.warning(f"[WARN] Commentaire échoué : {e}")
-            conn.commit()
-            logger.info(f"[OK] {len(comments)} commentaires ajoutés")
-            
-            # Ajouter index techniques
-            logger.info(f"[INDEX] Ajout index techniques")
-            index_ddl = generate_ods_indexes_ddl(table_name)
-            cur.execute(index_ddl)
-            conn.commit()
-            logger.info(f"[OK] Index créés")
-            
-            extent_expanded = True
-            
-        else:
-            # Pas d'extent, copier structure STAGING directement
-            logger.info(f"[LIST] CREATE {ods_table} (copie structure STAGING)")
-            
-            # [FIX] Créer table ODS comme copie EXACTE de STAGING
+        # INSERT toutes les données
+        logger.info(f"[INSERT] INSERT INTO {ods_table}")
+        cur.execute(f"INSERT INTO {ods_table} SELECT * FROM {src_table}")
+        rows_inserted = cur.rowcount
+        conn.commit()
+        logger.info(f"[OK] {rows_inserted:,} lignes insérées")
+        
+        # Ajouter PRIMARY KEY
+        pk_columns = get_primary_keys(table_name)
+        if pk_columns:
+            try:
+                pk_cols_str = ', '.join([f'"{col}"' for col in pk_columns])
+                logger.info(f"[KEY] Création PRIMARY KEY ({', '.join(pk_columns)})")
+                cur.execute(f"""
+                    ALTER TABLE {ods_table}
+                    ADD PRIMARY KEY ({pk_cols_str})
+                """)
+                conn.commit()
+                logger.info(f"[OK] PRIMARY KEY créée")
+            except Exception as e:
+                logger.warning(f"[WARN] Impossible de créer PK : {e}")
+                conn.rollback()
+        
+        # Créer index sur _etl_valid_from
+        try:
             cur.execute(f"""
-                CREATE TABLE {ods_table} AS 
-                SELECT * FROM {src_table} 
-                WHERE FALSE
+                CREATE INDEX IF NOT EXISTS idx_{table_name.lower()}_etl_valid_from
+                ON {ods_table} (_etl_valid_from)
             """)
             conn.commit()
-            logger.info(f"[OK] Table {ods_table} créée (structure STAGING)")
-            
-            # INSERT toutes les données
-            cur.execute(f"INSERT INTO {ods_table} SELECT * FROM {src_table}")
-            rows_inserted = cur.rowcount
-            conn.commit()
-            
-            logger.info(f"[OK] {rows_inserted:,} lignes insérées")
-            
-            extent_expanded = False
-        
-        # Ajouter PRIMARY KEY si pas déjà fait par DDL
-        logger.info(f"[KEY] Vérification contraintes")
-        # (PK déjà dans DDL, juste vérifier)
+            logger.info(f"[INDEX] Index créé sur _etl_valid_from")
+        except Exception as e:
+            logger.warning(f"[WARN] Impossible de créer INDEX : {e}")
+            conn.rollback()
         
         logger.info(f"[OK] FULL RESET terminé : {rows_inserted:,} lignes insérées")
         
@@ -290,9 +142,7 @@ def merge_ods_full_reset(table_name: str, run_id: str):
             "mode": "FULL_RESET",
             "rows_inserted": rows_inserted,
             "rows_affected": rows_inserted,
-            "source_count": source_count,
-            "extent_expanded": extent_expanded,
-            "types_corrected": True
+            "source_count": source_count
         }
         
     except Exception as e:
@@ -303,13 +153,12 @@ def merge_ods_full_reset(table_name: str, run_id: str):
         cur.close()
         conn.close()
 
+
 @task(name="[SAVE] Merge ODS (FULL)", retries=1)
 def merge_ods_full(table_name: str, run_id: str):
     """
     Mode FULL : TRUNCATE + INSERT (sans DROP)
-    
-    [WARN] Si table n'existe pas OU si extent détecté → fallback FULL_RESET
-    (car extent change la structure)
+    [SIMPLIFIÉ] Si table n'existe pas → fallback FULL_RESET
     """
     logger = get_run_logger()
     logger.info(f"[SAVE] Merge ODS FULL pour {table_name}")
@@ -337,13 +186,6 @@ def merge_ods_full(table_name: str, run_id: str):
         
         ods_exists = cur.fetchone()[0]
         
-        # [CRITICAL] Si extent présent, TOUJOURS faire FULL_RESET (structure change)
-        if has_extent_columns(table_name):
-            logger.warning(f"[WARN] Table avec extent → FULL_RESET (structure change)")
-            cur.close()
-            conn.close()
-            return merge_ods_full_reset(table_name, run_id)
-        
         # Si table n'existe pas, faire FULL_RESET
         if not ods_exists:
             logger.info(f"[NEW] Table n'existe pas → FULL_RESET")
@@ -351,12 +193,14 @@ def merge_ods_full(table_name: str, run_id: str):
             conn.close()
             return merge_ods_full_reset(table_name, run_id)
         
-        # TRUNCATE + INSERT (seulement si pas d'extent)
-        logger.info(f"[DROP] TRUNCATE {ods_table}")
+        # TRUNCATE + INSERT
+        logger.info(f"[TRUNCATE] TRUNCATE {ods_table}")
         cur.execute(f"TRUNCATE TABLE {ods_table}")
         conn.commit()
         
-        logger.info(f"📥 INSERT INTO {ods_table}")
+        logger.info(f"[INSERT] INSERT INTO {ods_table}")
+        
+        # Récupérer colonnes communes entre STAGING et ODS
         cur.execute(f"""
             SELECT column_name 
             FROM information_schema.columns 
@@ -404,8 +248,7 @@ def merge_ods_full(table_name: str, run_id: str):
 def merge_ods_incremental(table_name: str, run_id: str):
     """
     Mode INCREMENTAL : UPSERT (INSERT nouveaux + UPDATE modifiés)
-    
-    [WARN] Si extent présent → Fallback FULL (impossible de merger colonnes éclatées)
+    [SIMPLIFIÉ] Plus de problème avec extent (déjà éclaté dans STAGING) ✅
     """
     logger = get_run_logger()
     logger.info(f"[SAVE] Merge ODS INCREMENTAL pour {table_name}")
@@ -416,11 +259,6 @@ def merge_ods_incremental(table_name: str, run_id: str):
         raise ValueError(f"[ERROR] Aucune PK pour {table_name}")
     
     logger.info(f"[KEY] PK : {', '.join(pk_columns)}")
-    
-    # [WARN] EXTENT + INCREMENTAL non supporté
-    if has_extent_columns(table_name):
-        logger.warning(f"[WARN] INCREMENTAL avec extent non supporté → Fallback FULL")
-        return merge_ods_full(table_name, run_id)
     
     src_table = f"staging_etl.stg_{table_name.lower()}"
     ods_table = f"ods.{table_name.lower()}"
@@ -462,7 +300,7 @@ def merge_ods_incremental(table_name: str, run_id: str):
         pk_join = ' AND '.join([f'target."{pk}" = source."{pk}"' for pk in pk_columns])
         
         # INSERT nouveaux
-        logger.info("[SYNC] INSERT nouveaux")
+        logger.info("[UPSERT] INSERT nouveaux")
         cur.execute(f"""
             INSERT INTO {ods_table} ({columns_str})
             SELECT {columns_str} FROM {src_table} AS source
@@ -527,6 +365,7 @@ def merge_ods_incremental(table_name: str, run_id: str):
 def merge_ods_auto(table_name: str, run_id: str, load_mode: str = "AUTO"):
     """
     [TARGET] ROUTER : Merger STAGING → ODS avec mode automatique ou forcé
+    [SIMPLIFIÉ] Plus de fallback extent !
     
     Priorité de détermination du mode :
     1. load_mode passé en paramètre (si != "AUTO")

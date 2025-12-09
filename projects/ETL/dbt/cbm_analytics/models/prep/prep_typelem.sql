@@ -1,56 +1,35 @@
 {{ config(materialized='view') }}
 
--- Staging model for typelem
+/*
+    ============================================================================
+    Modèle PREP : typelem
+    ============================================================================
+    Généré automatiquement le 2025-12-05 15:38:21
+    
+    Source       : ods.typelem
+    Lignes       : 43
+    Colonnes ODS : 153
+    Colonnes PREP: 11
+    Exclues      : 142 (92.8%)
+    
+    Exclusions:
+      - Techniques ETL  : 7
+      - 100% NULL       : 107
+      - Constantes      : 28
+      - Faible valeur   : 0
+    ============================================================================
+*/
 
 SELECT
-    "actif" AS actif,
-    "bl_mini" AS bl_mini,
-    "chap_util" AS chap_util,
-    "chemin" AS chemin,
-    "color_bg" AS color_bg,
-    "color_fg" AS color_fg,
-    "commande" AS commande,
-    "contenant" AS contenant,
-    "d_qa" AS d_qa,
-    "d_qv" AS d_qv,
-    "decl_a" AS decl_a,
-    "decl_v" AS decl_v,
-    "flag_repli" AS flag_repli,
-    "gen_dev" AS gen_dev,
-    "ges_billon" AS ges_billon,
-    "ges_gmao" AS ges_gmao,
-    "ges_loc" AS ges_loc,
-    "ges_qtemo" AS ges_qtemo,
-    "ges_rend" AS ges_rend,
-    "grille-a" AS grille_a,
-    "grille-v" AS grille_v,
-    "gst_gen" AS gst_gen,
-    "jal_ach" AS jal_ach,
+    "typ_fich" AS typ_fich,
+    "typ_elem" AS typ_elem,
+    "sous_type" AS sous_type,
     "lib_elem" AS lib_elem,
-    "mod_bpc" AS mod_bpc,
-    "mod_sui" AS mod_sui,
-    "modele_fiche" AS modele_fiche,
-    "mot-cle" AS mot_cle,
-    "mt_mini" AS mt_mini,
-    "nat_cde" AS nat_cde,
-    "ndos" AS ndos,
+    "stock" AS stock,
+    "stat" AS stat,
     "nmc_com" AS nmc_com,
     "nmc_pro" AS nmc_pro,
-    "ori_cde" AS ori_cde,
-    "particulier" AS particulier,
-    "ps_auto" AS ps_auto,
-    "sous_type" AS sous_type,
-    "stat" AS stat,
-    "stock" AS stock,
-    "TabPart_typelem" AS tabpart_typelem,
-    "ty_mini" AS ty_mini,
-    "typ_bois" AS typ_bois,
-    "typ_car" AS typ_car,
-    "typ_elem" AS typ_elem,
-    "typ_fich" AS typ_fich,
-    "typefl" AS typefl,
-    "variante" AS variante,
-    _loaded_at,
-    _source_file,
-    _sftp_log_id
+    "commande" AS commande,
+    "contenant" AS contenant,
+    "_etl_run_id" AS _etl_run_id
 FROM {{ source('ods', 'typelem') }}

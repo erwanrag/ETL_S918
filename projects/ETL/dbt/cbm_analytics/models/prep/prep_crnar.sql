@@ -1,8 +1,23 @@
 {{ config(materialized='view') }}
 
 /*
-    Modèle PREP pour crnar
-    Généré automatiquement depuis ODS pour inclure les colonnes éclataées (Extent)
+    ============================================================================
+    Modèle PREP : crnar
+    ============================================================================
+    Généré automatiquement le 2025-12-05 15:19:50
+    
+    Source       : ods.crnar
+    Lignes       : 429
+    Colonnes ODS : 61
+    Colonnes PREP: 13
+    Exclues      : 48 (78.7%)
+    
+    Exclusions:
+      - Techniques ETL  : 7
+      - 100% NULL       : 36
+      - Constantes      : 5
+      - Faible valeur   : 0
+    ============================================================================
 */
 
 SELECT
@@ -14,57 +29,9 @@ SELECT
     "dat_crt" AS dat_crt,
     "usr_mod" AS usr_mod,
     "dat_mod" AS dat_mod,
-    "zal_1" AS zal_1,
-    "zal_2" AS zal_2,
-    "zal_3" AS zal_3,
-    "zal_4" AS zal_4,
-    "zal_5" AS zal_5,
-    "znu_1" AS znu_1,
-    "znu_2" AS znu_2,
-    "znu_3" AS znu_3,
-    "znu_4" AS znu_4,
-    "znu_5" AS znu_5,
-    "zta_1" AS zta_1,
-    "zta_2" AS zta_2,
-    "zta_3" AS zta_3,
-    "zta_4" AS zta_4,
-    "zta_5" AS zta_5,
-    "zda_1" AS zda_1,
-    "zda_2" AS zda_2,
-    "zda_3" AS zda_3,
-    "zda_4" AS zda_4,
-    "zda_5" AS zda_5,
     "px_vte" AS px_vte,
     "marque" AS marque,
-    "zlo_1" AS zlo_1,
-    "zlo_2" AS zlo_2,
-    "zlo_3" AS zlo_3,
-    "zlo_4" AS zlo_4,
-    "zlo_5" AS zlo_5,
     "texte" AS texte,
-    "pp_uv" AS pp_uv,
     "cod_pro" AS cod_pro,
-    "poid_brut_1" AS poid_brut_1,
-    "poid_brut_2" AS poid_brut_2,
-    "poid_brut_3" AS poid_brut_3,
-    "gencod-v" AS gencod-v,
-    "rayon" AS rayon,
-    "TabPart_crnar" AS tabpart_crnar,
-    "flag_repli" AS flag_repli,
-    "pds_net_1" AS pds_net_1,
-    "pds_net_2" AS pds_net_2,
-    "pds_net_3" AS pds_net_3,
-    "nb_uv" AS nb_uv,
-    "nb_cv" AS nb_cv,
-    "lib_univ" AS lib_univ,
-    "lib_conv" AS lib_conv,
-    "lib_surv" AS lib_surv,
-    "_etl_loaded_at" AS _etl_loaded_at,
-    "_etl_updated_at" AS _etl_updated_at,
-    "_etl_run_id" AS _etl_run_id,
-    "_etl_source" AS _etl_source,
-    "_etl_hashdiff" AS _etl_hashdiff,
-    "_etl_is_active" AS _etl_is_active,
-    "_etl_valid_from" AS _etl_valid_from,
-    "_etl_valid_to" AS _etl_valid_to
+    "_etl_run_id" AS _etl_run_id
 FROM {{ source('ods', 'crnar') }}

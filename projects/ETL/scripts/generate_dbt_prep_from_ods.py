@@ -1,9 +1,11 @@
 """
 ============================================================================
-Générateur de modèles dbt PREP depuis ODS physique
+Générateur de modèles dbt PREP depuis ODS physique (VERSION CORRIGÉE)
 ============================================================================
 Objectif : Synchroniser les modèles dbt avec la structure réelle des tables ODS
            générées par le pipeline Python (qui éclate les colonnes Extent).
+           
+FIX : Remplace les tirets (-) par underscores (_) dans les alias
 ============================================================================
 """
 
@@ -56,8 +58,9 @@ def generate_prep_model_content(table_name, columns):
     
     cols_list = []
     for col in columns:
-        # On quote les colonnes pour gérer les majuscules/caractères spéciaux éventuels
-        cols_list.append(f'    "{col}" AS {col.lower()}')
+        # FIX: Remplacer tirets par underscores dans l'alias
+        alias = col.lower().replace('-', '_')
+        cols_list.append(f'    "{col}" AS {alias}')
 
     select_block = ",\n".join(cols_list)
     
@@ -65,7 +68,7 @@ def generate_prep_model_content(table_name, columns):
 
 /*
     Modèle PREP pour {table_name}
-    Généré automatiquement depuis ODS pour inclure les colonnes éclataées (Extent)
+    Généré automatiquement depuis ODS pour inclure les colonnes éclatées (Extent)
 */
 
 SELECT
@@ -76,7 +79,7 @@ FROM {{{{ source('ods', '{table_name}') }}}}
 
 def main():
     print("=" * 70)
-    print("🔄 SYNC DBT PREP <-> ODS STRUCTURE")
+    print("🔄 SYNC DBT PREP <-> ODS STRUCTURE (AVEC FIX TIRETS)")
     print("=" * 70)
     
     dbt_prep_dir = Path(config.dbt_project_dir) / "models" / "prep"
@@ -91,28 +94,25 @@ def main():
         return
 
     if not structure:
-        print("[WARN] Aucune table trouvée dans le schéma 'ods'. Lancez d'abord le pipeline d'ingestion.")
+        print("[WARN] Aucune table trouvée dans le schéma 'ods'.")
+        print("Le pipeline Python doit être exécuté au moins une fois avant de générer les modèles PREP.")
         return
 
     print(f"[DATA] {len(structure)} tables trouvées.")
     
-    count = 0
-    for table_name, columns in structure.items():
-        # Générer le SQL
-        sql_content = generate_prep_model_content(table_name, columns)
+    for table_name, cols in structure.items():
+        model_file = dbt_prep_dir / f"prep_{table_name}.sql"
+        content = generate_prep_model_content(table_name, cols)
         
-        # Nom du fichier : prep_{table}.sql
-        file_path = dbt_prep_dir / f"prep_{table_name}.sql"
+        with open(model_file, 'w', encoding='utf-8') as f:
+            f.write(content)
         
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(sql_content)
-            
-        print(f"  ✅ Généré : prep_{table_name}.sql ({len(columns)} colonnes)")
-        count += 1
-
+        print(f"  ✅ Généré : prep_{table_name}.sql ({len(cols)} colonnes)")
+    
     print("=" * 70)
-    print(f"[OK] Terminé. {count} modèles mis à jour.")
+    print(f"[OK] Terminé. {len(structure)} modèles mis à jour.")
     print("Prochaine étape : Lancer 'dbt run --models prep' ou le pipeline complet.")
+
 
 if __name__ == "__main__":
     main()

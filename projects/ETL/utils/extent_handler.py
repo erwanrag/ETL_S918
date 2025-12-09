@@ -28,7 +28,8 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 from flows.config.pg_config import config
-
+from utils.custom_types import build_column_definition
+from utils.metadata_helper import get_columns_metadata
 
 def _clean_progress_label(raw_label: Optional[str]) -> str:
     """
@@ -252,82 +253,166 @@ def get_extent_mapping(table_name: str) -> Dict[str, List[str]]:
     return mapping
 
 
-def build_ods_select_with_extent_typed(
-    table_name: str,
-    staging_columns: List[str]
-) -> Tuple[str, List[str], Dict[str, str]]:
+def build_ods_select_with_extent_typed(table_name: str, raw_columns: List[str]):
     """
-    [NEW] VERSION AMÉLIORÉE : Construire SELECT avec typage ET cast intelligent
+    Version PRO :
+    - utilise build_column_definition pour récupérer le type cible
+    - CAST toutes les colonnes (extent + normales) vers ce type
+    - pas de CASE custom, pas de logique manuelle
     """
+
+    cols_meta = get_columns_metadata(table_name)
     extent_metadata = get_extent_columns_with_metadata(table_name)
-    
+
     select_parts = []
-    ods_columns = []
+    expanded_columns = []
     column_types = {}
-    
-    for col in staging_columns:
-        # ============================================================
-        # COLONNE EXTENT : Éclater avec typage intelligent
-        # ============================================================
+
+    for col in raw_columns:
+
+        # ================================================
+        # 1) COLONNE EXTENT : éclatement + typage metadata
+        # ================================================
         if col in extent_metadata:
             meta = extent_metadata[col]
             extent = meta['extent']
-            pg_type = get_pg_type_for_extent_column(
-                meta['progress_type'],
-                meta['data_type'],
-                meta['width'],
-                meta['scale']
-            )
-            
+
             for i in range(1, extent + 1):
                 expanded_col = f"{col}_{i}"
-                
-                # [CRITICAL] GESTION NULL STRICTE
-                if pg_type.startswith('VARCHAR'):
-                    expr = f"""NULLIF(NULLIF(NULLIF(TRIM(split_part("{col}", ';', {i})), ''), '?'), ' ')::{pg_type}"""
-                
-                elif pg_type.startswith('NUMERIC') or pg_type == 'INTEGER':
-                    expr = f"""CASE 
-                        WHEN TRIM(split_part("{col}", ';', {i})) IN ('', '?', ' ') THEN NULL
-                        WHEN TRIM(split_part("{col}", ';', {i})) ~ '^-?[0-9]+\.?[0-9]*$' THEN 
-                            NULLIF(TRIM(split_part("{col}", ';', {i})), '0')::{pg_type}
-                        ELSE NULL
-                    END"""
-                    
-                elif pg_type == 'DATE':
-                    expr = f"""CASE 
-                        WHEN TRIM(split_part("{col}", ';', {i})) IN ('', '?', '00/00/00', '00-00-00', ' ') THEN NULL
-                        WHEN TRIM(split_part("{col}", ';', {i})) ~ '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{4}}$' THEN 
-                            TO_DATE(TRIM(split_part("{col}", ';', {i})), 'MM/DD/YYYY')
-                        WHEN TRIM(split_part("{col}", ';', {i})) ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$' THEN 
-                            TRIM(split_part("{col}", ';', {i}))::DATE
-                        ELSE NULL
-                    END"""
-                    
-                elif pg_type == 'BOOLEAN':
-                    expr = f"""CASE 
-                        WHEN LOWER(TRIM(split_part("{col}", ';', {i}))) IN ('yes', 'true', '1') THEN TRUE
-                        WHEN LOWER(TRIM(split_part("{col}", ';', {i}))) IN ('no', 'false', '0') THEN FALSE
-                        ELSE NULL
-                    END"""
-                    
+
+                # type final via la même logique que STAGING
+                pg_type = get_pg_type_for_extent_column(
+                    meta['progress_type'],
+                    meta['data_type'],
+                    meta['width'],
+                    meta['scale']
+                )
+
+                clean_expr = f"TRIM(split_part(\"{col}\", ';', {i}))"
+
+                # ---------------------
+                # TYPE DATE
+                # ---------------------
+                if pg_type.upper() == "DATE":
+                    expr = f"""
+                        CASE
+                            -- Valeurs invalides connues
+                            WHEN {clean_expr} IN 
+                                ('', '?', '??', '???', '00000000','00/00/0000','00-00-0000') 
+                            THEN NULL
+
+                            -- Format YYYYMMDD (Progress)
+                            WHEN {clean_expr} ~ '^[0-9]{{8}}$'
+                            THEN TO_DATE({clean_expr}, 'YYYYMMDD')
+
+                            -- Format FR DD/MM/YYYY
+                            WHEN {clean_expr} ~ '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{4}}$'
+                                AND split_part({clean_expr}, '/', 1)::int BETWEEN 1 AND 31
+                                AND split_part({clean_expr}, '/', 2)::int BETWEEN 1 AND 12
+                            THEN TO_DATE({clean_expr}, 'DD/MM/YYYY')
+
+                            -- Format US MM/DD/YYYY → NOUVEAU
+                            WHEN {clean_expr} ~ '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{4}}$'
+                                AND split_part({clean_expr}, '/', 1)::int BETWEEN 1 AND 12
+                                AND split_part({clean_expr}, '/', 2)::int BETWEEN 1 AND 31
+                            THEN TO_DATE({clean_expr}, 'MM/DD/YYYY')
+
+                            -- ISO
+                            WHEN {clean_expr} ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$'
+                            THEN {clean_expr}::DATE
+
+                            ELSE NULL
+                        END AS "{expanded_col}"
+                    """
+
+
+                # ---------------------
+                # TYPE NUMERIC
+                # ---------------------
+                elif "NUMERIC" in pg_type.upper():
+                    expr = f"""
+                        CASE
+                            WHEN {clean_expr} IN ('', '?', '??', '???', '-', 'NULL')
+                            THEN NULL
+                            WHEN {clean_expr} ~ '^[0-9]+(\\.[0-9]+)?$'
+                            THEN {clean_expr}::{pg_type}
+                            ELSE NULL
+                        END AS "{expanded_col}"
+                    """
+
+                # ---------------------
+                # TYPE INTEGER
+                # ---------------------
+                elif pg_type.upper() == "INTEGER":
+                    expr = f"""
+                        CASE
+                            WHEN {clean_expr} IN ('', '?', '??', '???', '-', 'NULL')
+                            THEN NULL
+                            WHEN {clean_expr} ~ '^[0-9]+$'
+                            THEN {clean_expr}::INTEGER
+                            ELSE NULL
+                        END AS "{expanded_col}"
+                    """
+
+                # ---------------------
+                # TYPE BOOLEAN
+                # ---------------------
+                elif pg_type.upper() == "BOOLEAN":
+                    expr = f"""
+                        CASE
+                            WHEN {clean_expr} IN ('', '?', '??', 'NULL')
+                            THEN NULL
+                            WHEN LOWER({clean_expr}) IN ('1','true','t','yes','y')
+                            THEN TRUE
+                            WHEN LOWER({clean_expr}) IN ('0','false','f','no','n')
+                            THEN FALSE
+                            ELSE NULL
+                        END AS "{expanded_col}"
+                    """
+
+                # ---------------------
+                # TYPE VARCHAR / autres TEXT
+                # ---------------------
                 else:
-                    expr = f"""NULLIF(NULLIF(TRIM(split_part("{col}", ';', {i})), ''), '?')"""
-                
-                select_parts.append(f"{expr} AS {expanded_col}")
-                ods_columns.append(expanded_col)
+                    expr = f"""
+                        NULLIF({clean_expr}, '')::{pg_type} AS "{expanded_col}"
+                    """
+
+
+
+                select_parts.append(expr)
+                expanded_columns.append(expanded_col)
                 column_types[expanded_col] = pg_type
-        
-        # ============================================================
-        # COLONNE NORMALE
-        # ============================================================
+
+        # ======================================================
+        # 2) COLONNE NORMALE : typage générique via metadata
+        # ======================================================
+        elif col in cols_meta:
+
+            meta = cols_meta[col]
+
+            # Récupération du type PostgreSQL EXACT utilisé dans STAGING
+            ddl = build_column_definition(meta)  # ex:   dat_crt DATE
+            _, pg_type = ddl.split(" ", 1)       # on extrait juste la partie type
+
+            expr = f"""
+                NULLIF("{col}"::text, '')::{pg_type} AS "{col}"
+            """
+
+            select_parts.append(expr)
+            expanded_columns.append(col)
+            column_types[col] = pg_type
+
         else:
-            select_parts.append(f'"{col}"')
-            ods_columns.append(col)
-    
-    select_clause = ',\n            '.join(select_parts)
-    
-    return select_clause, ods_columns, column_types
+            # Colonne technique RAW → fallback TEXT
+            expr = f'NULLIF("{col}"::text, \'\') AS "{col}"'
+            select_parts.append(expr)
+            expanded_columns.append(col)
+            column_types[col] = "TEXT"
+
+    select_clause = ",\n".join(select_parts)
+
+    return select_clause, expanded_columns, column_types
 
 
 def build_ods_select_with_extent(
