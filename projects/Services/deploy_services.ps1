@@ -79,8 +79,8 @@ function Test-PostgreSQL {
     try {
         $result = python -c @"
 import sys
-sys.path.insert(0, r'$ETLRoot')
-from flows.config.pg_config import config
+sys.path.insert(0, r'$ServicesRoot')
+from config.pg_config import config
 import psycopg2
 
 try:
@@ -125,8 +125,8 @@ function Test-PostgreSQLTables {
         try {
             $result = python -c @"
 import sys
-sys.path.insert(0, r'$ETLRoot')
-from flows.config.pg_config import config
+sys.path.insert(0, r'$ServicesRoot')
+from config.pg_config import config
 import psycopg2
 
 conn = psycopg2.connect(config.get_connection_string())

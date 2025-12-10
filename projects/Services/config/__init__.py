@@ -1,4 +1,3 @@
-"""Config module for Services"""
-from .pg_config import config, Config
 
-__all__ = ['config', 'Config']
+
+__all__ = []  # Liste vide - imports explicites requis

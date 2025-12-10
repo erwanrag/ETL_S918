@@ -3,8 +3,8 @@
 Flow Prefect : Gestion Devises (Codes ISO + Taux de Change)
 ============================================================================
 Description :
-    - Recuperation codes ISO 4217 (currencies)
-    - Recuperation taux de change quotidiens
+    - Récupération codes ISO 4217 (currencies)
+    - Récupération taux de change quotidiens
     - Stockage dans PostgreSQL schema reference
     
 Tables PostgreSQL :
@@ -12,7 +12,7 @@ Tables PostgreSQL :
     - reference.currency_rates (historique)
     - reference.currency_rates_today (snapshot du jour)
 
-APIs Utilisees (GRATUITES, SANS CLe) :
+APIs Utilisées (GRATUITES, SANS CLÉ) :
     - https://openexchangerates.org/api/currencies.json (codes ISO)
     - https://open.er-api.com/v6/latest/EUR (taux de change)
 ============================================================================
@@ -33,23 +33,23 @@ sys.path.insert(0, str(SERVICES_PATH))
 from config.pg_config import config
 
 # =============================================================================
-# CONFIGURATION APIs - GRATUITES SANS CLe
+# CONFIGURATION APIs - GRATUITES SANS CLÉ
 # =============================================================================
 
-# API codes ISO (gratuite, pas de cle requise)
+# API codes ISO (gratuite, pas de clé requise)
 API_CODES_URL = "https://openexchangerates.org/api/currencies.json"
 
-# API taux de change (gratuite, pas de cle requise) 
+# API taux de change (gratuite, pas de clé requise) 
 API_RATES_URL = "https://open.er-api.com/v6/latest/EUR"
 
 # =============================================================================
 # TASKS - CODES ISO DEVISES
 # =============================================================================
 
-@task(name="[TASK] Fetch Currency Codes", retries=3, retry_delay_seconds=60)
+@task(name="📥 Fetch Currency Codes", retries=3, retry_delay_seconds=60)
 def fetch_currency_codes():
     """
-    Recuperer codes devises ISO 4217 depuis openexchangerates.org
+    Récupérer codes devises ISO 4217 depuis openexchangerates.org
     Retourne: dict {code: nom_complet}
     """
     logger = get_run_logger()
@@ -59,18 +59,18 @@ def fetch_currency_codes():
         response.raise_for_status()
         codes = response.json()
         
-        logger.info(f"[OK] {len(codes)} codes devises recuperes")
+        logger.info(f"✅ {len(codes)} codes devises récupérés")
         return codes
         
     except requests.exceptions.RequestException as e:
-        logger.error(f"[ERROR] Erreur requête API: {e}")
+        logger.error(f"❌ Erreur requête API: {e}")
         raise
     except Exception as e:
-        logger.error(f"[ERROR] Erreur inattendue: {e}")
+        logger.error(f"❌ Erreur inattendue: {e}")
         raise
 
 
-@task(name="[TASK] Save Currency Codes", retries=2)
+@task(name="💾 Save Currency Codes", retries=2)
 def save_currency_codes(codes: dict):
     """Sauvegarder codes devises dans reference.currencies"""
     logger = get_run_logger()
@@ -81,7 +81,7 @@ def save_currency_codes(codes: dict):
         cur = conn.cursor()
         
         # Utiliser INSERT ON CONFLICT au lieu de TRUNCATE
-        # pour eviter probleme avec les FK
+        # pour éviter problème avec les FK
         sql = """
             INSERT INTO reference.currencies
             (currency_code, currency_name, last_updated)
@@ -97,12 +97,12 @@ def save_currency_codes(codes: dict):
             inserted += 1
         
         conn.commit()
-        logger.info(f"[OK] {inserted} codes devises inseres/mis a jour")
+        logger.info(f"✅ {inserted} codes devises insérés/mis à jour")
         
     except psycopg2.Error as e:
         if conn:
             conn.rollback()
-        logger.error(f"[ERROR] Erreur PostgreSQL: {e}")
+        logger.error(f"❌ Erreur PostgreSQL: {e}")
         raise
     finally:
         if conn:
@@ -114,10 +114,10 @@ def save_currency_codes(codes: dict):
 # TASKS - TAUX DE CHANGE
 # =============================================================================
 
-@task(name="[TASK] Fetch Exchange Rates", retries=3, retry_delay_seconds=60)
+@task(name="📈 Fetch Exchange Rates", retries=3, retry_delay_seconds=60)
 def fetch_exchange_rates():
     """
-    Recuperer taux de change quotidiens depuis open.er-api.com
+    Récupérer taux de change quotidiens depuis open.er-api.com
     Retourne: {date: "YYYY-MM-DD", base: "EUR", rates: {currency: rate}}
     """
     logger = get_run_logger()
@@ -127,7 +127,7 @@ def fetch_exchange_rates():
         response.raise_for_status()
         data = response.json()
         
-        # Verifier que la reponse est valide
+        # Vérifier que la réponse est valide
         if data.get("result") != "success":
             raise ValueError(f"API error: {data.get('error-type', 'Unknown')}")
         
@@ -139,18 +139,18 @@ def fetch_exchange_rates():
             from datetime import datetime as dt
             rate_date = dt.strptime(rate_date, "%a, %d %b %Y %H:%M:%S %z").strftime("%Y-%m-%d")
         
-        logger.info(f"[OK] {len(rates)} taux de change recuperes pour {rate_date}")
+        logger.info(f"✅ {len(rates)} taux de change récupérés pour {rate_date}")
         return {"date": rate_date, "base": "EUR", "rates": rates}
         
     except requests.exceptions.RequestException as e:
-        logger.error(f"[ERROR] Erreur requête API: {e}")
+        logger.error(f"❌ Erreur requête API: {e}")
         raise
     except Exception as e:
-        logger.error(f"[ERROR] Erreur inattendue: {e}")
+        logger.error(f"❌ Erreur inattendue: {e}")
         raise
 
 
-@task(name="[TASK] Save Exchange Rates", retries=2)
+@task(name="💾 Save Exchange Rates", retries=2)
 def save_exchange_rates(data: dict):
     """
     Sauvegarder taux de change dans :
@@ -168,7 +168,7 @@ def save_exchange_rates(data: dict):
         rates = data["rates"]
         
         # =====================================================================
-        # FILTRE : Recuperer les codes valides depuis currencies
+        # FILTRE : Récupérer les codes valides depuis currencies
         # =====================================================================
         cur.execute("SELECT currency_code FROM reference.currencies")
         valid_codes = {row[0] for row in cur.fetchall()}
@@ -182,7 +182,7 @@ def save_exchange_rates(data: dict):
         skipped = len(rates) - len(filtered_rates)
         if skipped > 0:
             invalid_codes = set(rates.keys()) - valid_codes
-            logger.warning(f"[WARNING] {skipped} devises ignorees (codes invalides) : {sorted(invalid_codes)[:5]}...")
+            logger.warning(f"⚠️ {skipped} devises ignorées (codes invalides) : {sorted(invalid_codes)[:5]}...")
         
         # =====================================================================
         # 1. Historique (INSERT avec ON CONFLICT)
@@ -215,13 +215,13 @@ def save_exchange_rates(data: dict):
             inserted_today += 1
         
         conn.commit()
-        logger.info(f"[OK] Historique: {inserted_hist} taux pour {rate_date}")
-        logger.info(f"[OK] Snapshot: {inserted_today} taux (aujourd'hui)")
+        logger.info(f"✅ Historique: {inserted_hist} taux pour {rate_date}")
+        logger.info(f"✅ Snapshot: {inserted_today} taux (aujourd'hui)")
         
     except psycopg2.Error as e:
         if conn:
             conn.rollback()
-        logger.error(f"[ERROR] Erreur PostgreSQL: {e}")
+        logger.error(f"❌ Erreur PostgreSQL: {e}")
         raise
     finally:
         if conn:
@@ -233,35 +233,35 @@ def save_exchange_rates(data: dict):
 # FLOWS PRINCIPAUX
 # =============================================================================
 
-@flow(name="Load Currency Codes ISO 4217")
+@flow(name="📘 Load Currency Codes ISO 4217")
 def load_currency_codes_flow():
     """
     Flow : Charger codes devises ISO 4217
-    Frequence recommandee : 1x/mois
+    Fréquence recommandée : 1x/mois
     """
     logger = get_run_logger()
-    logger.info("[START] Chargement codes ISO 4217")
+    logger.info("🚀 DÉBUT - Chargement codes ISO 4217")
     
     codes = fetch_currency_codes()
     save_currency_codes(codes)
     
-    logger.info(f"[OK] FIN - {len(codes)} codes traites")
+    logger.info(f"✅ FIN - {len(codes)} codes traités")
     return {"nb_codes": len(codes)}
 
 
-@flow(name="Load Daily Exchange Rates")
+@flow(name="📈 Load Daily Exchange Rates")
 def load_exchange_rates_flow():
     """
     Flow : Charger taux de change quotidiens
-    Frequence recommandee : 1x/jour (matin)
+    Fréquence recommandée : 1x/jour (matin)
     """
     logger = get_run_logger()
-    logger.info("[START] Chargement taux de change")
+    logger.info("🚀 DÉBUT - Chargement taux de change")
     
     data = fetch_exchange_rates()
     save_exchange_rates(data)
     
-    logger.info(f"[OK] FIN - {len(data['rates'])} taux pour {data['date']}")
+    logger.info(f"✅ FIN - {len(data['rates'])} taux pour {data['date']}")
     return {"date": data["date"], "nb_rates": len(data["rates"])}
 
 
@@ -283,9 +283,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     if args.mode in ("codes", "both"):
-        print("\n Chargement codes devises...")
+        print("\n🌍 Chargement codes devises...")
         load_currency_codes_flow()
     
     if args.mode in ("rates", "both"):
-        print("\n Chargement taux de change...")
+        print("\n💱 Chargement taux de change...")
         load_exchange_rates_flow()

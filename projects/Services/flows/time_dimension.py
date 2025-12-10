@@ -106,7 +106,7 @@ def has_53_iso_weeks(year: int) -> bool:
 # TASK PRINCIPAL
 # =============================================================================
 
-@task(name="📅 Generate Time Dimension Data", retries=1)
+@task(name="[TASK] Generate Time Dimension Data", retries=1)
 def generate_time_dimension():
     """Génère et insère toutes les dates dans reference.time_dimension"""
     logger = get_run_logger()
@@ -126,7 +126,7 @@ def generate_time_dimension():
         end = date(2035, 12, 31)
         total_days = (end - start).days + 1
         
-        logger.info(f"📊 Génération {total_days} jours ({start} → {end})")
+        logger.info(f"  Génération {total_days} jours ({start} → {end})")
         
         # SQL INSERT
         sql = """
@@ -219,17 +219,17 @@ def generate_time_dimension():
             conn.commit()
             rows_inserted += len(batch)
         
-        logger.info(f"✅ TERMINÉ - {rows_inserted} jours insérés")
+        logger.info(f"[OK] TERMINÉ - {rows_inserted} jours insérés")
         
         return {"rows_inserted": rows_inserted, "start_date": str(start), "end_date": str(end)}
         
     except psycopg2.Error as e:
         if conn:
             conn.rollback()
-        logger.error(f"❌ Erreur PostgreSQL: {e}")
+        logger.error(f"[ERROR] Erreur PostgreSQL: {e}")
         raise
     except Exception as e:
-        logger.error(f"❌ Erreur inattendue: {e}")
+        logger.error(f"[ERROR] Erreur inattendue: {e}")
         raise
     finally:
         if conn:
@@ -241,18 +241,18 @@ def generate_time_dimension():
 # FLOW PRINCIPAL
 # =============================================================================
 
-@flow(name="📅 Build Time Dimension")
+@flow(name="Build Time Dimension")
 def build_time_dimension_flow():
     """
     Flow : Construire dimension temporelle
     Fréquence : 1x à l'initialisation, puis annuel
     """
     logger = get_run_logger()
-    logger.info("🚀 DÉBUT - Construction time_dimension")
+    logger.info("[LOADING] DÉBUT - Construction time_dimension")
     
     result = generate_time_dimension()
     
-    logger.info(f"✅ FIN - {result['rows_inserted']} jours")
+    logger.info(f"[OK] FIN - {result['rows_inserted']} jours")
     return result
 
 
