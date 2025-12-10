@@ -74,3 +74,8 @@ Thumbs.db
 # SERVICES / CURRENCY RATES
 # ---------------------
 projects/services/config/pg_config.py
+
+# ---------------------
+# SHARED
+# ---------------------
+projects/shared/alerting/config.py

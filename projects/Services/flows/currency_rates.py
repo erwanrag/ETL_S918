@@ -25,6 +25,7 @@ import psycopg2
 from datetime import datetime
 import sys
 from pathlib import Path
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Ajouter Services au path
 SERVICES_PATH = Path(__file__).resolve().parent.parent
@@ -45,7 +46,7 @@ API_RATES_URL = "https://open.er-api.com/v6/latest/EUR"
 # =============================================================================
 # TASKS - CODES ISO DEVISES
 # =============================================================================
-
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 @task(name="[TASK] Fetch Currency Codes", retries=3, retry_delay_seconds=60)
 def fetch_currency_codes():
     """
@@ -69,7 +70,7 @@ def fetch_currency_codes():
         logger.error(f"[ERROR] Erreur inattendue: {e}")
         raise
 
-
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 @task(name="[TASK] Save Currency Codes", retries=2)
 def save_currency_codes(codes: dict):
     """Sauvegarder codes devises dans reference.currencies"""
@@ -113,7 +114,7 @@ def save_currency_codes(codes: dict):
 # =============================================================================
 # TASKS - TAUX DE CHANGE
 # =============================================================================
-
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 @task(name="[TASK] Fetch Exchange Rates", retries=3, retry_delay_seconds=60)
 def fetch_exchange_rates():
     """
@@ -149,13 +150,20 @@ def fetch_exchange_rates():
         logger.error(f"[ERROR] Erreur inattendue: {e}")
         raise
 
+from tenacity import retry, stop_after_attempt, wait_exponential
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 @task(name="[TASK] Save Exchange Rates", retries=2)
 def save_exchange_rates(data: dict):
     """
     Sauvegarder taux de change dans :
     - reference.currency_rates (historique)
     - reference.currency_rates_today (snapshot)
+    
+    Validations :
+    - EUR = 1.0 (base)
+    - Pas de taux négatifs/nuls
+    - Alerte si taux > 10000 (suspect)
     """
     logger = get_run_logger()
     
@@ -168,20 +176,46 @@ def save_exchange_rates(data: dict):
         rates = data["rates"]
         
         # =====================================================================
+        # VALIDATION : EUR doit être 1.0 (base de référence)
+        # =====================================================================
+        if rates.get('EUR') != 1.0:
+            raise ValueError(f"[ERROR] EUR rate invalide : {rates.get('EUR')} (attendu 1.0)")
+        
+        # =====================================================================
         # FILTRE : Recuperer les codes valides depuis currencies
         # =====================================================================
         cur.execute("SELECT currency_code FROM reference.currencies")
         valid_codes = {row[0] for row in cur.fetchall()}
         
         # Filtrer les taux pour ne garder que les codes valides
-        filtered_rates = {
-            curr: rate for curr, rate in rates.items() 
-            if curr in valid_codes
-        }
+        filtered_rates = {}
+        invalid_rates = []
+        suspect_rates = []
         
-        skipped = len(rates) - len(filtered_rates)
+        for curr, rate in rates.items():
+            # Validation : pas de taux négatifs/nuls
+            if rate <= 0:
+                invalid_rates.append(f"{curr}={rate}")
+                continue
+            
+            # Alerte : taux suspects (> 10000)
+            if rate > 10000:
+                suspect_rates.append(f"{curr}={rate}")
+            
+            # Filtrer codes invalides
+            if curr in valid_codes:
+                filtered_rates[curr] = rate
+        
+        # Logs warnings
+        if invalid_rates:
+            logger.warning(f"[WARNING] {len(invalid_rates)} taux negatifs/nuls ignores : {invalid_rates[:5]}")
+        
+        if suspect_rates:
+            logger.warning(f"[WARNING] {len(suspect_rates)} taux suspects (>10000) : {suspect_rates[:5]}")
+        
+        skipped = len(rates) - len(filtered_rates) - len(invalid_rates)
         if skipped > 0:
-            invalid_codes = set(rates.keys()) - valid_codes
+            invalid_codes = set(rates.keys()) - valid_codes - {c.split('=')[0] for c in invalid_rates}
             logger.warning(f"[WARNING] {skipped} devises ignorees (codes invalides) : {sorted(invalid_codes)[:5]}...")
         
         # =====================================================================
@@ -218,16 +252,29 @@ def save_exchange_rates(data: dict):
         logger.info(f"[OK] Historique: {inserted_hist} taux pour {rate_date}")
         logger.info(f"[OK] Snapshot: {inserted_today} taux (aujourd'hui)")
         
+        # Log structuré pour métriques Prefect
+        logger.info("exchange_rates_saved", extra={
+            "date": rate_date,
+            "valid_rates": inserted_hist,
+            "invalid_rates": len(invalid_rates),
+            "suspect_rates": len(suspect_rates),
+            "skipped_codes": skipped
+        })
+        
     except psycopg2.Error as e:
         if conn:
             conn.rollback()
         logger.error(f"[ERROR] Erreur PostgreSQL: {e}")
         raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"[ERROR] Erreur inattendue: {e}")
+        raise
     finally:
         if conn:
             cur.close()
             conn.close()
-
 
 # =============================================================================
 # FLOWS PRINCIPAUX

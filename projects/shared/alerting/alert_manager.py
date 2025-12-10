@@ -1,0 +1,125 @@
+"""
+Gestionnaire unifié d'alertes multi-canaux
+"""
+from enum import Enum
+from typing import Optional, Dict
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class AlertLevel(Enum):
+    """Niveaux d'alerte"""
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
+class AlertManager:
+    """Routage intelligent des alertes vers Email et/ou Teams"""
+    
+    def __init__(self, 
+                 email_config: Optional[Dict] = None,
+                 teams_webhook: Optional[str] = None,
+                 routing: Optional[Dict] = None):
+        """
+        Args:
+            email_config: Config SMTP (ou None pour désactiver)
+            teams_webhook: URL webhook Teams (ou None pour désactiver)
+            routing: Règles de routage par niveau
+        """
+        # Import absolu au lieu de relatif
+        import sys
+        from pathlib import Path
+        alerting_dir = Path(__file__).parent
+        if str(alerting_dir) not in sys.path:
+            sys.path.insert(0, str(alerting_dir))
+        
+        from config import ALERT_ROUTING
+        
+        self.email_enabled = email_config is not None
+        self.teams_enabled = teams_webhook is not None
+        self.routing = routing or ALERT_ROUTING
+        
+        if self.email_enabled:
+            from email_alerts import EmailAlerter
+            self.email = EmailAlerter(email_config)
+        
+        if self.teams_enabled:
+            from teams_alerts import TeamsAlerter
+            self.teams = TeamsAlerter(teams_webhook)
+    
+    def send_alert(self, 
+                   level: AlertLevel,
+                   title: str, 
+                   message: str,
+                   context: Optional[Dict] = None,
+                   html: bool = False):
+        """
+        Envoyer alerte selon niveau et routage
+        
+        Args:
+            level: Niveau d'alerte (INFO, WARNING, ERROR, CRITICAL)
+            title: Titre de l'alerte
+            message: Message détaillé
+            context: Contexte additionnel (dict)
+            html: Si True, message est HTML (email uniquement)
+        """
+        
+        channels = self.routing.get(level.value, [])
+        
+        # Mapping couleurs Teams
+        color_map = {
+            AlertLevel.INFO: "info",
+            AlertLevel.WARNING: "warning",
+            AlertLevel.ERROR: "attention",
+            AlertLevel.CRITICAL: "attention"
+        }
+        
+        # Envoyer vers Teams
+        if "teams" in channels and self.teams_enabled:
+            self.teams.send(
+                title=title,
+                message=message,
+                color=color_map[level],
+                facts=context
+            )
+        
+        # Envoyer vers Email
+        if "email" in channels and self.email_enabled:
+            # Si HTML fourni, utiliser directement
+            if html:
+                email_body = message
+            else:
+                # Sinon, créer HTML automatiquement
+                from email_alerts import create_error_email_html
+                email_body = create_error_email_html(
+                    flow_name=context.get("flow", "Pipeline") if context else "Pipeline",
+                    error_message=message,
+                    context=context
+                )
+            
+            self.email.send(
+                title=title,
+                message=email_body,
+                html=True,
+                priority="high" if level in (AlertLevel.ERROR, AlertLevel.CRITICAL) else "normal"
+            )
+
+
+# Instance globale (à importer dans les flows)
+def get_alert_manager() -> AlertManager:
+    """Factory pour obtenir AlertManager configuré"""
+    import sys
+    from pathlib import Path
+    alerting_dir = Path(__file__).parent
+    if str(alerting_dir) not in sys.path:
+        sys.path.insert(0, str(alerting_dir))
+    
+    from config import EMAIL_CONFIG, TEAMS_WEBHOOK_URL
+    
+    return AlertManager(
+        email_config=EMAIL_CONFIG,
+        teams_webhook=TEAMS_WEBHOOK_URL
+    )
