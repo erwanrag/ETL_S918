@@ -51,23 +51,15 @@ class AlertManager:
             self.teams = TeamsAlerter(teams_webhook)
     
     def send_alert(self, 
-                   level: AlertLevel,
-                   title: str, 
-                   message: str,
-                   context: Optional[Dict] = None,
-                   html: bool = False):
-        """
-        Envoyer alerte selon niveau et routage
-        
-        Args:
-            level: Niveau d'alerte (INFO, WARNING, ERROR, CRITICAL)
-            title: Titre de l'alerte
-            message: Message détaillé
-            context: Contexte additionnel (dict)
-            html: Si True, message est HTML (email uniquement)
-        """
+                level: AlertLevel,
+                title: str, 
+                message: str,
+                context: Optional[Dict] = None,
+                html: bool = False):
+        """Envoyer alerte selon niveau et routage"""
         
         channels = self.routing.get(level.value, [])
+        logger.info(f"[ALERT] Level={level.value}, Channels={channels}")  # ← AJOUT
         
         # Mapping couleurs Teams
         color_map = {
@@ -79,34 +71,43 @@ class AlertManager:
         
         # Envoyer vers Teams
         if "teams" in channels and self.teams_enabled:
-            self.teams.send(
-                title=title,
-                message=message,
-                color=color_map[level],
-                facts=context
-            )
+            logger.info(f"[TEAMS] Envoi vers Teams...")  # ← AJOUT
+            try:
+                self.teams.send(
+                    title=title,
+                    message=message,
+                    color=color_map[level],
+                    facts=context
+                )
+                logger.info(f"[TEAMS] OK")  # ← AJOUT
+            except Exception as e:
+                logger.error(f"[TEAMS] ERREUR: {e}")  # ← AJOUT
         
         # Envoyer vers Email
         if "email" in channels and self.email_enabled:
-            # Si HTML fourni, utiliser directement
-            if html:
-                email_body = message
-            else:
-                # Sinon, créer HTML automatiquement
-                from email_alerts import create_error_email_html
-                email_body = create_error_email_html(
-                    flow_name=context.get("flow", "Pipeline") if context else "Pipeline",
-                    error_message=message,
-                    context=context
+            logger.info(f"[EMAIL] Envoi vers Email...")  # ← AJOUT
+            try:
+                # Si HTML fourni, utiliser directement
+                if html:
+                    email_body = message
+                else:
+                    # Sinon, créer HTML automatiquement
+                    from email_alerts import create_error_email_html
+                    email_body = create_error_email_html(
+                        flow_name=context.get("flow", "Pipeline") if context else "Pipeline",
+                        error_message=message,
+                        context=context
+                    )
+                
+                self.email.send(
+                    title=title,
+                    message=email_body,
+                    html=True,
+                    priority="high" if level in (AlertLevel.ERROR, AlertLevel.CRITICAL) else "normal"
                 )
-            
-            self.email.send(
-                title=title,
-                message=email_body,
-                html=True,
-                priority="high" if level in (AlertLevel.ERROR, AlertLevel.CRITICAL) else "normal"
-            )
-
+                logger.info(f"[EMAIL] OK")  # ← AJOUT
+            except Exception as e:
+                logger.error(f"[EMAIL] ERREUR: {e}")  # ← AJOUT
 
 # Instance globale (à importer dans les flows)
 def get_alert_manager() -> AlertManager:

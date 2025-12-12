@@ -68,7 +68,7 @@ def check_raw_table_has_data(table_name: str) -> bool:
         conn.close()
 
 
-@task(name="[DATA] Load mode")
+@task(name="[DATA] Get Load mode")
 def get_load_mode_for_table(table_name: str) -> str:
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
@@ -92,7 +92,7 @@ def get_load_mode_for_table(table_name: str) -> str:
         conn.close()
 
 
-@task(name="[STAGING] Table unique", retries=2)
+@task(name="[STAGING] Process Single Table", retries=2)
 def raw_to_staging_single_table(table_name: str, run_id: str) -> dict:
     """Process UNE table RAW → STAGING"""
     logger = get_run_logger()
@@ -136,7 +136,7 @@ def raw_to_staging_single_table(table_name: str, run_id: str) -> dict:
 
 
 @flow(
-    name="[LIST] RAW → STAGING (Parallèle)",
+    name="[02] ⚙️ RAW → STAGING (Parallel)",
     task_runner=ConcurrentTaskRunner()
 )
 def raw_to_staging_flow_parallel(
@@ -236,12 +236,12 @@ def raw_to_staging_flow_parallel(
     }
 
 
-@flow(name="[LIST] RAW → STAGING (Séquentiel)")
+@flow(name="[02] ⚙️ RAW → STAGING (Sequential)")
 def raw_to_staging_flow(
     table_names: Optional[List[str]] = None,
     run_id: Optional[str] = None
 ):
-    """Version séquentielle (legacy)"""
+    """Version sequentielle (legacy)"""
     logger = get_run_logger()
 
     if run_id is None:

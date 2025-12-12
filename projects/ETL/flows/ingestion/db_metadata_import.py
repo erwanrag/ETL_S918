@@ -27,7 +27,7 @@ def scan_db_metadata_directory():
     return [str(f) for f in files_found]
 
 
-@task(name="📥 Charger metadata dans PostgreSQL")
+@task(name="[LOAD] Charger metadata dans PostgreSQL")
 def load_metadata_to_postgres(file_path: str):
     logger = get_run_logger()
     file_name = Path(file_path).name
@@ -102,7 +102,7 @@ def load_metadata_to_postgres(file_path: str):
         raise
 
 
-@task(name="[PACKAGE] Archiver metadata + Nettoyage serveur")
+@task(name="[ARCHIVE] Archiver metadata + Nettoyage serveur")
 def archive_metadata_file(file_path: str):
     logger = get_run_logger()
     today = datetime.now().strftime('%Y-%m-%d')
@@ -130,11 +130,11 @@ def archive_metadata_file(file_path: str):
             logger.warning(f"[WARN] Impossible de supprimer du serveur SFTP : {e}")
 
 
-@flow(name="[DB] Import Metadata Progress → PostgreSQL", log_prints=True)
+@flow(name="[AUX] 🗃️ Import Metadata Progress → PostgreSQL", log_prints=True)
 def db_metadata_import_flow():
     logger = get_run_logger()
     logger.info("=" * 60)
-    logger.info("[DB] Import Metadata Progress")
+    logger.info("[AUX] Import Metadata Progress")
     logger.info("=" * 60)
     
     total_rows = 0

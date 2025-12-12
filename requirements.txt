@@ -28,6 +28,7 @@ loguru
 python-dotenv
 pathlib
 tqdm
+tenacity
 
 # Pour COPY en CSV tabulé
 pytz

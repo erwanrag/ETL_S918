@@ -1,104 +1,202 @@
 """
 ============================================================================
-Flow Prefect : Pipeline ETL Complet v5 (OPTIMISÉ)
+Flow Prefect : Pipeline ETL Complet v6 (avec Services)
 ============================================================================
+Ajout du flow Services (Currency Data) dans le pipeline principal
 """
-
 from datetime import datetime
 from prefect import flow
 from prefect.logging import get_run_logger
-from concurrent.futures import as_completed
 import sys
+from pathlib import Path
+from typing import Optional, List, Union
 
-sys.path.append(r'E:\Prefect\projects\ETL')
+# ========================================
+# PATHS PROJET (racine = E:/Prefect/Projects)
+# ========================================
 
-from flows.ingestion.db_metadata_import import db_metadata_import_flow
-from flows.ingestion.sftp_to_raw import sftp_to_raw_flow
-from flows.ingestion.raw_to_staging import raw_to_staging_flow_parallel, raw_to_staging_single_table
-from flows.ingestion.staging_to_ods import staging_to_ods_flow, staging_to_ods_single_table
-from flows.transformations.ods_to_prep import ods_to_prep_flow
-from flows.orchestration.parallel_helpers import group_tables_by_size, log_grouping_info
+# Racine du projet (3 parent folders depuis ce fichier)
+PROJECTS_PATH = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(PROJECTS_PATH))
+
+# Sous-dossiers utiles
+ETL_PATH = PROJECTS_PATH / "ETL"
+SERVICES_PATH = PROJECTS_PATH / "Services"
+ALERTING_PATH = PROJECTS_PATH / "shared" / "alerting"
+
+# ========================================
+# IMPORTS ETL
+# ========================================
+from ETL.flows.ingestion.db_metadata_import import db_metadata_import_flow
+from ETL.flows.ingestion.sftp_to_raw import sftp_to_raw_flow
+from ETL.flows.ingestion.raw_to_staging import raw_to_staging_flow_parallel
+from ETL.flows.ingestion.staging_to_ods import (
+    staging_to_ods_single_table, 
+    staging_to_ods_flow
+)
+from ETL.flows.transformations.ods_to_prep import ods_to_prep_flow
+from ETL.flows.orchestration.parallel_helpers import (
+    group_tables_by_size,
+    log_grouping_info
+)
+
+# ========================================
+# IMPORT SERVICES
+# ========================================
+from Services.flows.currency_rates import load_currency_data_flow
+
+# ========================================
+# IMPORT ALERTING + CONFIG FORCÉ
+# ========================================
+import importlib.util
+
+alerting_config_path = ALERTING_PATH / "config.py"
+spec = importlib.util.spec_from_file_location("alerting_config", alerting_config_path)
+alerting_config = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(alerting_config)
+
+# Injection dans sys.modules pour forcer alert_manager à utiliser notre config
+sys.modules["config"] = alerting_config
+
+from shared.alerting.alert_manager import get_alert_manager, AlertLevel
+
+# Initialisation alert manager
+alert_mgr = get_alert_manager()
 
 
-@flow(name="[START] Pipeline ETL v5 (Optimisé)", log_prints=True)
+
+@flow(name="[00] 🚀 Pipeline ETL Proginov", log_prints=True)
 def full_etl_pipeline(
-    run_dbt: bool = False, 
-    import_metadata: bool = False,
-    enable_parallel: bool = True
+    table_names=None,
+    run_dbt=False, 
+    import_metadata=False,
+    enable_parallel=True,
+    run_services=False
 ):
-    """Pipeline ETL complet optimisé"""
+    """
+    Pipeline ETL complet Proginov
+    
+    Args:
+        table_names: Liste tables a traiter (None = toutes)
+        run_services: Charger donnees devises
+        run_dbt: Executer dbt apres ODS
+        import_metadata: Importer metadonnees Progress
+        enable_parallel: Activer parallelisation
+    """
     logger = get_run_logger()
     start_time = datetime.now()
-    run_id = f"full_pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    run_id = f"etl_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     logger.info("=" * 70)
-    logger.info("[START] PIPELINE ETL v5 (OPTIMISÉ)")
+    logger.info("[START] PIPELINE ETL PROGINOV")
     logger.info(f"[RUN] {run_id}")
-    logger.info(f"[PARALLEL] {'ACTIF' if enable_parallel else 'INACTIF'}")
+    logger.info(f"[TABLES] {table_names if table_names else 'ALL'}")
+    logger.info(f"[PARALLEL] {'ON' if enable_parallel else 'OFF'}")
+    logger.info(f"[SERVICES] {'ON' if run_services else 'OFF'}")
+    logger.info(f"[DBT] {'ON' if run_dbt else 'OFF'}")
     logger.info("=" * 70)
     
     results = {
         'run_id': run_id,
         'start_time': start_time.isoformat(),
+        'table_filter': table_names,
         'metadata_imported': False,
         'raw_tables': 0,
         'staging_tables': 0,
         'ods_tables': 0,
         'dbt_models': 0,
+        'services_executed': False,
+        'currency_codes': 0,
+        'currency_rates': 0,
         'parallel_enabled': enable_parallel,
         'errors': []
     }
     
     try:
         # ========================================
+        # 0. SERVICES (optionnel)
+        # ========================================
+        if run_services:
+            logger.info("=" * 70)
+            logger.info("[SERVICES] Currency Data")
+            try:
+                services_result = load_currency_data_flow()
+                results['services_executed'] = True
+                results['currency_codes'] = services_result.get('nb_codes', 0)
+                results['currency_rates'] = services_result.get('nb_rates', 0)
+                logger.info(f"[OK] {results['currency_codes']} codes, {results['currency_rates']} taux")
+            except Exception as e:
+                logger.error(f"[ERROR] Services : {e}")
+                results['errors'].append(f"services: {str(e)}")
+        else:
+            logger.info("[SKIP] Services")
+        
+        # ========================================
         # 1. METADATA (optionnel)
         # ========================================
         if import_metadata:
             logger.info("=" * 70)
-            logger.info("[BOOKS] Metadata Progress")
+            logger.info("[METADATA] Progress")
             try:
                 db_metadata_import_flow()
                 results['metadata_imported'] = True
-                logger.info("[OK] Metadata importés")
+                logger.info("[OK] Metadata importes")
             except Exception as e:
                 logger.warning(f"[SKIP] Metadata : {e}")
                 results['errors'].append(f"metadata: {str(e)}")
-        else:
-            logger.info("[SKIP] Metadata")
         
         # ========================================
         # 2. SFTP → RAW
         # ========================================
         logger.info("=" * 70)
-        logger.info("[DATA] SFTP → RAW")
+        logger.info("[SFTP] RAW")
         
-        raw_result = sftp_to_raw_flow()
+        raw_result = sftp_to_raw_flow(table_filter=table_names)
         results['raw_tables'] = raw_result['tables_loaded']
         results['raw_rows'] = raw_result.get('total_rows', 0)
         
         tables_to_process = raw_result.get('tables', [])
         table_sizes = raw_result.get('table_sizes', {})
         
-        if raw_result['tables_loaded'] == 0:
-            logger.info("[STOP] Rien à traiter")
+        # FILTRAGE : Appliquer table_names si fourni
+        if table_names:
+            logger.info(f"[FILTER] Filtrage sur {len(table_names)} tables")
+            tables_to_process = [t for t in tables_to_process if t in table_names]
+            logger.info(f"[FILTER] {len(tables_to_process)} tables retenues")
+        
+        if len(tables_to_process) == 0:
+            logger.info("[STOP] Aucune table a traiter")
             results['end_time'] = datetime.now().isoformat()
             results['duration_seconds'] = (datetime.now() - start_time).total_seconds()
+            
+            if run_services and results['services_executed']:
+                alert_mgr.send_alert(
+                    level=AlertLevel.INFO,
+                    title="Pipeline ETL - No Data",
+                    message="Services OK, aucune donnee ETL a traiter",
+                    context={
+                        "Run ID": run_id,
+                        "Services": f"OK {results['currency_codes']} codes",
+                        "Filter": str(table_names) if table_names else "None",
+                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                )
+            
             return results
         
-        logger.info(f"[OK] {results['raw_tables']} tables, {results['raw_rows']:,} lignes")
+        logger.info(f"[OK] {len(tables_to_process)} tables, {results['raw_rows']:,} lignes")
         
         # ========================================
-        # 3. DÉDUPLICATION + GROUPEMENT
+        # 3. DEDUPLICATION + GROUPEMENT
         # ========================================
         logger.info("=" * 70)
-        logger.info("[OPTIM] Déduplication + Groupement")
+        logger.info("[OPTIM] Deduplication")
         
         tables_unique = list(set(tables_to_process))
         tables_unique.sort()
         
         logger.info(f"[DEDUPE] {len(tables_to_process)} fichiers → {len(tables_unique)} tables")
         
-        # Groupement par taille
         if enable_parallel and table_sizes:
             groups = group_tables_by_size(tables_unique, table_sizes)
             log_grouping_info(groups, table_sizes, logger)
@@ -107,14 +205,13 @@ def full_etl_pipeline(
             logger.info(f"[SEQ] {len(tables_unique)} tables")
         
         # ========================================
-        # 4. RAW → STAGING (PARALLÈLE)
+        # 4. RAW → STAGING
         # ========================================
         logger.info("=" * 70)
-        logger.info("[PARALLEL] RAW → STAGING")
+        logger.info("[STAGING] Processing")
         
         staging_start = datetime.now()
         
-        # Utiliser directement le flow parallèle optimisé
         if enable_parallel:
             staging_result = raw_to_staging_flow_parallel(
                 table_names=tables_unique,
@@ -131,88 +228,49 @@ def full_etl_pipeline(
         results['staging_rows'] = staging_result.get('total_rows', 0)
         
         staging_duration = (datetime.now() - staging_start).total_seconds()
-        logger.info(f"[OK] {results['staging_tables']} tables, {results['staging_rows']:,} lignes")
-        logger.info(f"[TIMER] {staging_duration:.2f}s")
+        logger.info(f"[OK] {results['staging_tables']} tables, {staging_duration:.2f}s")
         
+
         # ========================================
-        # 5. STAGING → ODS (PARALLÈLE)
+        # 5. STAGING → ODS
         # ========================================
         logger.info("=" * 70)
-        logger.info("[PARALLEL] STAGING → ODS")
+        logger.info("[ODS] Processing")
         
         ods_start = datetime.now()
-        ods_results = []
         
-        if enable_parallel:
-            # SMALL : Parallèle illimité
-            if groups['small']:
-                logger.info(f"[SMALL] {len(groups['small'])} tables")
-                small_ods = staging_to_ods_single_table.map(
-                    table_name=groups['small'],
-                    run_id=[run_id] * len(groups['small']),
-                    load_mode=["AUTO"] * len(groups['small'])
-                )
-                ods_results.extend(small_ods)
-            
-            # MEDIUM : Chunks de 3
-            if groups['medium']:
-                logger.info(f"[MEDIUM] {len(groups['medium'])} tables (x3)")
-                for i in range(0, len(groups['medium']), 3):
-                    chunk = groups['medium'][i:i+3]
-                    medium_ods = staging_to_ods_single_table.map(
-                        table_name=chunk,
-                        run_id=[run_id] * len(chunk),
-                        load_mode=["AUTO"] * len(chunk)
-                    )
-                    ods_results.extend(medium_ods)
-            
-            # LARGE : Séquentiel
-            if groups['large']:
-                logger.info(f"[LARGE] {len(groups['large'])} tables (seq)")
-                for table in groups['large']:
-                    result = staging_to_ods_single_table(table, run_id, "AUTO")
-                    ods_results.append(result)
-            
-            # Résoudre futures
-            resolved = []
-            for future in ods_results:
-                try:
-                    r = future.result() if hasattr(future, 'result') else future
-                    resolved.append(r)
-                except Exception as e:
-                    logger.error(f"[ERROR] Future : {e}")
-            
-            successful = [r for r in resolved if r and r.get('status') == 'success']
-            results['ods_tables'] = len(successful)
-            results['ods_rows_affected'] = sum(r.get('rows', 0) for r in successful)
-        else:
-            # Séquentiel
-            ods_result = staging_to_ods_flow(tables_unique, run_id, "AUTO")
-            results['ods_tables'] = ods_result['tables_merged']
-            results['ods_rows_affected'] = ods_result.get('total_rows_affected', 0)
+        # TOUJOURS utiliser le subflow (pour cohérence UI)
+        from flows.ingestion.staging_to_ods import staging_to_ods_flow
+        
+        ods_result = staging_to_ods_flow(
+            table_names=tables_unique,
+            load_mode="AUTO",
+            run_id=run_id
+        )
+        
+        results['ods_tables'] = ods_result.get('tables_merged', 0)
+        results['ods_rows_affected'] = ods_result.get('total_rows_affected', 0)
         
         ods_duration = (datetime.now() - ods_start).total_seconds()
-        logger.info(f"[OK] {results['ods_tables']} tables, {results['ods_rows_affected']:,} lignes")
-        logger.info(f"[TIMER] {ods_duration:.2f}s")
+        logger.info(f"[OK] {results['ods_tables']} tables, {ods_duration:.2f}s")
+
         
         # ========================================
         # 6. ODS → PREP (dbt optionnel)
         # ========================================
         if run_dbt:
             logger.info("=" * 70)
-            logger.info("[DBT] ODS → PREP")
+            logger.info("[DBT] Transformations")
             try:
                 dbt_result = ods_to_prep_flow(models="prep.*", run_tests=False)
                 results['dbt_models'] = dbt_result.get('models_count', 0)
-                logger.info(f"[OK] {results['dbt_models']} modèles")
+                logger.info(f"[OK] {results['dbt_models']} modeles")
             except Exception as e:
                 logger.error(f"[ERROR] dbt : {e}")
                 results['errors'].append(f"dbt: {str(e)}")
-        else:
-            logger.info("[SKIP] dbt")
         
         # ========================================
-        # RÉSUMÉ
+        # 7. RESUME FINAL
         # ========================================
         end_time = datetime.now()
         results['end_time'] = end_time.isoformat()
@@ -220,50 +278,103 @@ def full_etl_pipeline(
         results['success'] = len(results['errors']) == 0
         
         logger.info("=" * 70)
-        logger.info("[DONE] PIPELINE TERMINÉ")
-        logger.info("=" * 70)
-        logger.info(f"[TIMER] Total: {results['duration_seconds']:.2f}s")
+        logger.info("[DONE] PIPELINE TERMINE")
+        logger.info(f"[TIMER] {results['duration_seconds']:.2f}s")
         logger.info(f"  RAW: {results['raw_tables']} tables")
-        logger.info(f"  STAGING: {results['staging_tables']} tables, {staging_duration:.2f}s")
-        logger.info(f"  ODS: {results['ods_tables']} tables, {ods_duration:.2f}s")
+        logger.info(f"  STAGING: {results['staging_tables']} tables")
+        logger.info(f"  ODS: {results['ods_tables']} tables")
+        
+        if run_services:
+            logger.info(f"  SERVICES: {results['currency_codes']} codes")
         if run_dbt:
-            logger.info(f"  DBT: {results['dbt_models']} modèles")
+            logger.info(f"  DBT: {results['dbt_models']} modeles")
         if results['errors']:
-            logger.warning(f"[WARN] {len(results['errors'])} erreurs")
+            logger.warning(f"  ERRORS: {len(results['errors'])}")
+        
         logger.info("=" * 70)
+        
+        # ========================================
+        # ALERTING
+        # ========================================
+        if results['success']:
+            context = {
+                "Run ID": run_id,
+                "Duration": f"{results['duration_seconds']:.2f}s",
+                "Tables": f"{results['ods_tables']} tables",
+                "Timestamp": end_time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            if table_names:
+                context["Filter"] = f"{len(table_names)} tables"
+            
+            if run_services:
+                context["Services"] = f"{results['currency_codes']} codes"
+            
+            if run_dbt:
+                context["DBT"] = f"{results['dbt_models']} modeles"
+            
+            alert_mgr.send_alert(
+                level=AlertLevel.INFO,
+                title="Pipeline ETL Proginov - SUCCESS",
+                message="Pipeline execute avec succes",
+                context=context
+            )
+        else:
+            context = {
+                "Run ID": run_id,
+                "Duration": f"{results['duration_seconds']:.2f}s",
+                "Errors": ", ".join(results['errors']),
+                "Tables": f"{results['ods_tables']} tables",
+                "Timestamp": end_time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            alert_mgr.send_alert(
+                level=AlertLevel.ERROR,
+                title="Pipeline ETL Proginov - PARTIAL FAILURE",
+                message=f"Pipeline termine avec {len(results['errors'])} erreurs",
+                context=context
+            )
         
         return results
         
     except Exception as e:
-        logger.error(f"[ERROR] CRITIQUE : {e}")
-        results['end_time'] = datetime.now().isoformat()
-        results['duration_seconds'] = (datetime.now() - start_time).total_seconds()
+        logger.error(f"[CRITICAL] {e}")
+        
+        end_time = datetime.now()
+        results['end_time'] = end_time.isoformat()
+        results['duration_seconds'] = (end_time - start_time).total_seconds()
         results['success'] = False
         results['errors'].append(f"CRITICAL: {str(e)}")
+        
+        alert_mgr.send_alert(
+            level=AlertLevel.CRITICAL,
+            title="Pipeline ETL Proginov - CRITICAL",
+            message="Erreur critique",
+            context={
+                "Run ID": run_id,
+                "Error": str(e),
+                "Duration": f"{results['duration_seconds']:.2f}s",
+                "Timestamp": end_time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+        )
+        
         raise
-
-
-@flow(name="[DATA] Ingestion seule")
-def ingestion_pipeline_only(enable_parallel: bool = True):
-    """Pipeline ingestion sans dbt"""
-    return full_etl_pipeline(
-        run_dbt=False,
-        import_metadata=False,
-        enable_parallel=enable_parallel
-    )
 
 
 if __name__ == "__main__":
     import sys
     
     if len(sys.argv) > 1:
-        if sys.argv[1] == '--ingestion-only':
-            ingestion_pipeline_only()
+        if sys.argv[1] == '--with-services':
+            full_etl_pipeline(run_services=True)
         elif sys.argv[1] == '--with-dbt':
             full_etl_pipeline(run_dbt=True)
-        elif sys.argv[1] == '--sequential':
-            full_etl_pipeline(enable_parallel=False)
+        elif sys.argv[1] == '--table':
+            table = sys.argv[2] if len(sys.argv) > 2 else None
+            full_etl_pipeline(table_names=[table] if table else None)
         else:
             full_etl_pipeline()
     else:
         full_etl_pipeline()
+
+

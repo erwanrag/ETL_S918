@@ -24,6 +24,7 @@ from sqlalchemy import create_engine
 import sys
 import pyarrow.compute as pc
 from io import BytesIO
+from typing import Optional, List
 
 sys.path.append(r'E:\Prefect\projects\ETL')
 from flows.config.pg_config import config
@@ -31,7 +32,7 @@ from utils.file_operations import archive_and_cleanup
 from utils.filename_parser import parse_and_resolve
 from utils.metadata_helper import get_table_metadata
 
-@task(name="[OPEN] Scanner SFTP parquet")
+@task(name="[SCAN] Scanner SFTP parquet")
 def scan_sftp_directory():
     logger = get_run_logger()
     parquet_dir = Path(config.sftp_parquet_dir)
@@ -40,7 +41,7 @@ def scan_sftp_directory():
     return [str(f) for f in files]
 
 
-@task(name="[FILE] Lire metadata JSON")
+@task(name="[META] Read Metadata JSON")
 def read_metadata_json(parquet_path: str):
     logger = get_run_logger()
     base = Path(parquet_path).stem
@@ -56,7 +57,7 @@ def read_metadata_json(parquet_path: str):
     return data
 
 
-@task(name="[DATA] Lire status JSON")
+@task(name="[DATA] Read status JSON")
 def read_status_json(parquet_path: str):
     logger = get_run_logger()
     base = Path(parquet_path).stem
@@ -70,7 +71,7 @@ def read_status_json(parquet_path: str):
     return data
 
 
-@task(name="[NOTE] Logger dans sftp_monitoring")
+@task(name="[LOG] Logger table sftp_monitoring")
 def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
     """
     Logger fichier SFTP dans sftp_monitoring.sftp_file_log
@@ -135,7 +136,7 @@ def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
         conn.close()
 
 
-@task(name="📥 Charger dans RAW (DROP + CREATE + COPY) [FIXED]")
+@task(name="[LOAD] Load in RAW (DROP + CREATE + COPY)")
 def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
     """
     Charge fichier parquet dans RAW avec parsing ConfigName correct
@@ -330,102 +331,8 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
         conn.close()
 
 
-@task(name="📥 Charger dans RAW (COPY Streaming Optimisé)")
-def load_to_raw_optimized(parquet_path: str, log_id: int, metadata: dict):
-    """
-    Chargement streaming ultra-optimisé :
-    - PyArrow natif (pas de Pandas)
-    - Conversion à la volée
-    - Buffer minimal
-    """
-    logger = get_run_logger()
-    
-    # ... [parsing et CREATE TABLE identique] ...
-    
-    # ========================================================================
-    # OPTIMISATION MAJEURE : Streaming PyArrow pur
-    # ========================================================================
-    
-    parquet_file = pq.ParquetFile(parquet_path)
-    
-    # Pré-calculer colonnes INTEGER (une seule fois)
-    integer_cols_set = set()
-    if metadata_types:
-        integer_cols_set = {
-            col for col, info in metadata_types.items()
-            if info.get('progress_type', '').upper() in ('INTEGER', 'INT', 'INT64')
-        }
-    
-    # Pré-compiler la liste des colonnes pour COPY
-    business_cols = [c for c in df_sample.columns 
-                     if c not in ('_loaded_at', '_source_file', '_sftp_log_id')]
-    
-    total_rows = 0
-    batch_size = 100000  # ← Augmenté (moins d'overhead)
-    
-    logger.info("[COPY] Streaming PyArrow → PostgreSQL")
-    
-    for batch_idx, arrow_batch in enumerate(parquet_file.iter_batches(batch_size=batch_size), 1):
-        
-        # Conversion INTEGER directement dans PyArrow (ultra-rapide)
-        for col in integer_cols_set:
-            if col in arrow_batch.schema.names:
-                col_data = arrow_batch.column(col)
-                # Cast PyArrow natif (10x plus rapide que Pandas)
-                if pa.types.is_floating(col_data.type):
-                    # Remplir NULL avec 0, puis cast INT64
-                    filled = pc.fill_null(col_data, 0)
-                    arrow_batch = arrow_batch.set_column(
-                        arrow_batch.schema.get_field_index(col),
-                        col,
-                        pc.cast(filled, pa.int64())
-                    )
-        
-        # Ajouter colonnes ETL (méthode PyArrow)
-        arrow_batch = arrow_batch.append_column(
-            '_loaded_at',
-            pa.array([datetime.now()] * len(arrow_batch), type=pa.timestamp('us'))
-        )
-        arrow_batch = arrow_batch.append_column(
-            '_source_file',
-            pa.array([file_name] * len(arrow_batch), type=pa.string())
-        )
-        arrow_batch = arrow_batch.append_column(
-            '_sftp_log_id',
-            pa.array([log_id] * len(arrow_batch), type=pa.int64())
-        )
-        
-        # Conversion PyArrow → CSV (SANS passer par Pandas)
-        # Utilise le writer CSV natif PyArrow
-        output = BytesIO()
-        
-        # PyArrow CSV writer (beaucoup plus rapide que Pandas)
-        from pyarrow import csv
-        csv_options = csv.WriteOptions(
-            delimiter='\t',
-            null_string='\\N',
-            include_header=False
-        )
-        
-        csv.write_csv(arrow_batch, output, write_options=csv_options)
-        output.seek(0)
-        
-        # COPY dans PostgreSQL
-        cur.copy_expert(copy_sql, output)
-        
-        total_rows += len(arrow_batch)
-        
-        # Log tous les 5 batches (moins verbose)
-        if batch_idx % 5 == 0:
-            logger.info(f"  [{total_rows:,} lignes • {batch_idx} batches]")
-    
-    conn.commit()
-    
-    logger.info(f"✅ {total_rows:,} lignes en {batch_idx} batches")
 
-
-
-@task(name="[PACKAGE] Archiver + Nettoyer SFTP")
+@task(name="[ARCHIVE] Archive File")
 def archive_files(parquet_path: str):
     logger = get_run_logger()
     base = Path(parquet_path).stem
@@ -452,10 +359,13 @@ def archive_files(parquet_path: str):
     )
 
 
-@flow(name="📥 SFTP → RAW (Ingestion brute)")
-def sftp_to_raw_flow():
+@flow(name="[01] 📥 SFTP → RAW")
+def sftp_to_raw_flow(table_filter=None):
     """
     Flow d'ingestion brute : SFTP → RAW
+    
+    Args:
+        table_filter: Liste des tables a traiter (None = toutes)
     
     Étapes :
     1. Scanner fichiers SFTP
@@ -474,35 +384,46 @@ def sftp_to_raw_flow():
             "tables_loaded": 0, 
             "total_rows": 0,
             "tables": [],
-            "table_sizes": {}  # ✅ AJOUT
+            "table_sizes": {}
         }
 
     total_rows = 0
     tables_loaded = []
-    table_sizes = {}  # ✅ AJOUT : {table_name: row_count}
+    table_sizes = {}
     
     for f in files:
         try:
+            # ÉTAPE 1 : Extraction rapide du nom de table depuis filename
+            file_name = Path(f).name
+            # Ex: focondi_20251211_050011.parquet → focondi
+            table_name_from_file = file_name.split('_')[0]
+            
+            # ÉTAPE 2 : FILTRAGE AVANT metadata check
+            if table_filter and table_name_from_file not in table_filter:
+                logger.info(f"[FILTER] Skip {table_name_from_file} - non demande")
+                continue
+            
+            # ÉTAPE 3 : Maintenant lire metadata
             meta = read_metadata_json(f)
             status = read_status_json(f)
-            
+
             if not meta:
                 logger.warning(f"[WARN] Skip {f} - pas de metadata")
                 continue
-            
+
             table_name = meta.get('table_name', 'unknown')
-            row_count = status.get('row_count', 0) if status else 0  
+            row_count = status.get('row_count', 0) if status else 0
             
             logger.info(f"[TARGET] Traitement de {table_name}")
             
             log_id = log_file_to_monitoring(f, meta, status)
             result = load_to_raw(f, log_id, meta)
             
-            # ✅ GESTION DES FICHIERS VIDES/SKIPPED
+            # GESTION DES FICHIERS VIDES/SKIPPED
             if result.get('skipped', False):
                 logger.warning(f"[SKIP] {table_name} - Raison: {result.get('reason', 'unknown')}")
                 
-                # ✅ Mettre à jour sftp_monitoring
+                # Mettre a jour sftp_monitoring
                 conn = psycopg2.connect(config.get_connection_string())
                 cur = conn.cursor()
                 try:
@@ -514,17 +435,16 @@ def sftp_to_raw_flow():
                         WHERE log_id = %s
                     """, (result.get('reason', 'Fichier vide'), log_id))
                     conn.commit()
-
                 finally:
                     cur.close()
                     conn.close()
                 
-                # ✅ Archiver quand même le fichier
+                # Archiver quand meme le fichier
                 archive_files(f)
                 
-                # ✅ NE PAS ajouter à tables_loaded
+                # NE PAS ajouter a tables_loaded
                 logger.info(f"[INFO] Fichier archive mais table non creee")
-                continue  # ← Passer au fichier suivant
+                continue
             
             # Si pas skipped, continuer normalement
             archive_files(f)
@@ -534,7 +454,7 @@ def sftp_to_raw_flow():
             physical_name = result["physical_name"]
             tables_loaded.append(physical_name)
             
-            # ✅ STOCKER LA TAILLE (utiliser max si doublons)
+            # STOCKER LA TAILLE
             if physical_name in table_sizes:
                 table_sizes[physical_name] = max(table_sizes[physical_name], row_count)
             else:
@@ -544,7 +464,6 @@ def sftp_to_raw_flow():
             
         except Exception as e:
             logger.error(f"[ERROR] Erreur {f} : {e}")
-            # Ne pas bloquer le pipeline pour une table en erreur
             continue
 
     logger.info(f"[TARGET] TERMINE : {len(tables_loaded)} table(s), {total_rows:,} lignes")
@@ -553,8 +472,9 @@ def sftp_to_raw_flow():
         "tables_loaded": len(tables_loaded),
         "total_rows": total_rows,
         "tables": tables_loaded,
-        "table_sizes": table_sizes  
+        "table_sizes": table_sizes
     }
+
 
 if __name__ == "__main__":
     sftp_to_raw_flow()
