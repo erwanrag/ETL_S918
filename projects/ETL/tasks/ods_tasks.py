@@ -5,6 +5,7 @@ ODS Tasks - STAGING → ODS SIMPLIFIÉ (extent déjà éclaté dans STAGING)
 [SIMPLIFIÉ] Plus besoin d'éclater extent (déjà fait dans STAGING)
 [OK] INCREMENTAL fonctionne maintenant avec extent !
 [OK] Support FULL, INCREMENTAL, FULL_RESET
+[FIX] Déduplication STAGING avant INSERT (DISTINCT ON)
 ============================================================================
 """
 
@@ -263,6 +264,7 @@ def merge_ods_incremental(table_name: str, run_id: str):
     """
     Mode INCREMENTAL : UPSERT (INSERT nouveaux + UPDATE modifiés)
     [SIMPLIFIÉ] Plus de problème avec extent (déjà éclaté dans STAGING) ✅
+    [FIX] Déduplication STAGING avant INSERT avec DISTINCT ON
     """
     logger = get_run_logger()
     logger.info(f"[SAVE] Merge ODS INCREMENTAL pour {table_name}")
@@ -313,15 +315,25 @@ def merge_ods_incremental(table_name: str, run_id: str):
         
         pk_join = ' AND '.join([f'target."{pk}" = source."{pk}"' for pk in pk_columns])
         
-        # INSERT nouveaux
-        logger.info("[UPSERT] INSERT nouveaux")
+        # INSERT nouveaux (avec déduplication STAGING via DISTINCT ON)
+        logger.info("[UPSERT] INSERT nouveaux (avec déduplication)")
+        
+        # Construire DISTINCT ON avec toutes les PK
+        pk_cols_str = ', '.join([f'"{pk}"' for pk in pk_columns])
+        
+        # Vérifier si _etl_valid_from existe dans les colonnes
+        has_etl_valid_from = '_etl_valid_from' in columns
+        order_by_clause = f"{pk_cols_str}, \"_etl_valid_from\" DESC" if has_etl_valid_from else pk_cols_str
+        
         cur.execute(f"""
             INSERT INTO {ods_table} ({columns_str})
-            SELECT {columns_str} FROM {src_table} AS source
+            SELECT DISTINCT ON ({pk_cols_str}) {columns_str} 
+            FROM {src_table} AS source
             WHERE NOT EXISTS (
                 SELECT 1 FROM {ods_table} AS target
                 WHERE {pk_join}
             )
+            ORDER BY {order_by_clause}
         """)
         inserted_count = cur.rowcount
         conn.commit()
@@ -341,10 +353,16 @@ def merge_ods_incremental(table_name: str, run_id: str):
             else:
                 full_set = '"_etl_hashdiff" = source."_etl_hashdiff", "_etl_valid_from" = source."_etl_valid_from"'
             
+            # UPDATE avec déduplication via subquery
+            logger.info("[UPSERT] UPDATE modifiés (avec déduplication)")
             cur.execute(f"""
                 UPDATE {ods_table} AS target
                 SET {full_set}
-                FROM {src_table} AS source
+                FROM (
+                    SELECT DISTINCT ON ({pk_cols_str}) {columns_str}
+                    FROM {src_table}
+                    ORDER BY {order_by_clause}
+                ) AS source
                 WHERE {pk_join}
                   AND target."_etl_hashdiff" != source."_etl_hashdiff"
             """)

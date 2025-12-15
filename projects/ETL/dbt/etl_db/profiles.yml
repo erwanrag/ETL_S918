@@ -1,9 +1,3 @@
-# ============================================================================
-# Profiles dbt - Configuration PostgreSQL
-# ============================================================================
-# Fichier : dbt/etl_db/profiles.yml
-# ============================================================================
-
 etl_db:
   target: dev
   outputs:
@@ -12,23 +6,20 @@ etl_db:
       host: localhost
       port: 5432
       user: postgres
-      password: "{{ env_var('DBT_POSTGRES_PASSWORD') | b64decode }}"
+      password: "{{ env_var('DBT_POSTGRES_PASSWORD') }}"
       dbname: etl_db
-      schema: raw
+      schema: prep
       threads: 4
       keepalives_idle: 0
       connect_timeout: 10
-      search_path: raw,staging,ods,marts,public
-      client_encoding: UTF8
+
     
     prod:
       type: postgres
       host: localhost
       port: 5432
       user: postgres
-      password: "{{ env_var('DBT_POSTGRES_PASSWORD') | b64decode }}"
+      password: "{{ env_var('DBT_POSTGRES_PASSWORD') }}"
       dbname: etl_db
-      schema: ods
+      schema: prep
       threads: 8
-      search_path: ods,marts,raw,staging,public
-      client_encoding: UTF8

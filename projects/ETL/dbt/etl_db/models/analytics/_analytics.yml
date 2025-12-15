@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: dim_client
+    description: "Dimension client enrichie pour BI"
+    columns:
+      - name: client_id
+        description: "Identifiant client"
+        tests:
+          - unique
+          - not_null
+      
+      - name: client_name
+        description: "Nom du client"
+      
+      - name: segment
+        description: "Segment client (VIP, Premium, Standard)"
+        tests:
+          - accepted_values:
+              values: ['VIP', 'Premium', 'Standard']
+  
+  - name: fact_sales_daily
+    description: "Fait ventes agrégées par jour"
+    columns:
+      - name: sale_date
+        description: "Date de vente"
+        tests:
+          - not_null
+      
+      - name: revenue
+        description: "Chiffre d'affaires HT"
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"

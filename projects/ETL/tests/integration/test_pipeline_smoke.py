@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 def test_scan_sftp_directory():
     pytest.skip("Necessaire contexte Prefect")

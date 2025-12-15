@@ -1,426 +1,399 @@
 """
 ============================================================================
-Générateur PREP ULTRA-INTELLIGENT - Version Complète
+Script de génération automatique des modèles dbt PREP - VERSION DYNAMIQUE
 ============================================================================
-Fonctionnalités :
-  ✅ Analyse exhaustive de pertinence des colonnes
-  ✅ Mode multi-tables OU single-table
-  ✅ Détection colonnes corrélées (redondantes)
-  ✅ Analyse cardinalité et distribution
-  ✅ Détection colonnes calculables
-  ✅ Rapport HTML + Markdown
-  ✅ Mode dry-run (aperçu sans génération)
-  ✅ Whitelist/Blacklist personnalisables
-  ✅ Logs détaillés avec timestamp
-  
-Usage:
-  # Toutes les tables
-  python generate_dbt_prep_smart.py
-  
-  # Une table spécifique
-  python generate_dbt_prep_smart.py --table client
-  
-  # Dry-run (aperçu)
-  python generate_dbt_prep_smart.py --table produit --dry-run
-  
-  # Forcer inclusion colonne
-  python generate_dbt_prep_smart.py --table client --keep-columns "col1,col2"
+Stratégie :
+- Détection automatique PRIMARY KEY depuis PostgreSQL
+- Détection colonnes ETL (_etl_*) présentes dans ODS
+- Réplication des index ODS → PREP
+- Génération conditionnelle MERGE incrémental
 ============================================================================
 """
 
-import psycopg2
-import argparse
-import json
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Tuple, Set, Optional
-from collections import defaultdict
+import os
 import sys
+import psycopg2
+from pathlib import Path
+from typing import List, Dict, Tuple, Optional, Set
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+from dotenv import load_dotenv
 
-# Ajout du chemin projet
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from flows.config.pg_config import config
+# Charger les variables d'environnement
+load_dotenv()
 
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
+class DatabaseConfig:
+    """Configuration de la base de données"""
+    def __init__(self):
+        self.host = os.getenv('POSTGRES_HOST', 'localhost')
+        self.port = int(os.getenv('POSTGRES_PORT', 5432))
+        self.database = os.getenv('POSTGRES_DATABASE', 'etl_db')
+        self.user = os.getenv('POSTGRES_USER', 'postgres')
+        self.password = os.getenv('DBT_POSTGRES_PASSWORD')
+        
+    def get_connection_string(self) -> str:
+        return f"host={self.host} port={self.port} dbname={self.database} user={self.user} password={self.password}"
 
-class PrepConfig:
-    """Configuration globale du générateur"""
+
+class TableMetadata:
+    """Métadonnées d'une table ODS"""
     
-    # Colonnes techniques ETL à exclure
-    ETL_EXCLUDE = {
-        '_etl_hashdiff', '_etl_valid_from', '_etl_valid_to',
-        '_etl_is_active', '_etl_loaded_at', '_etl_updated_at',
-        '_etl_source', '_loaded_at', '_source_file', '_sftp_log_id'
-    }
-    
-    # Colonnes business critiques (toujours garder)
-    ALWAYS_KEEP = {
-        '_etl_run_id',  # Traçabilité
-        # Primary keys courantes
-        'cod_cli', 'cod_pro', 'cod_fou', 'cod_crn', 'no_piece', 
-        'no_ligne', 'uniq_id', 'no_tarif', 'no_cde',
-        # Dates importantes
-        'dat_pie', 'dat_liv', 'dat_crt', 'dat_mod', 'dat_deb', 'dat_fin',
-        # Montants
-        'montant', 'mt_ttc', 'mt_ht', 'px_vte', 'px_ach',
-        # Quantités
-        'qte', 'quantite'
-    }
-    
-    # Seuils d'exclusion
-    NULL_THRESHOLD = 100.0  # % NULL pour exclure
-    CONSTANT_THRESHOLD = 1   # Nb valeurs distinctes pour "constante"
-    LOW_VALUE_NULL_PCT = 95.0  # % NULL pour low-value
-    LOW_VALUE_DISTINCT = 5     # Nb valeurs distinctes pour low-value
-    CORRELATION_THRESHOLD = 0.98  # Seuil de corrélation
-    
-    # Patterns de colonnes calculables
-    CALCULATED_PATTERNS = [
-        ('_ht', '_ttc'),  # Montant HT calculable depuis TTC
-        ('_net', '_brut'),  # Net calculable depuis brut
-    ]
-
-
-# ============================================================================
-# ANALYSE COLONNES
-# ============================================================================
-
-class ColumnAnalyzer:
-    """Analyse avancée des colonnes"""
-    
-    def __init__(self, table_name: str):
+    def __init__(self, table_name: str, config: DatabaseConfig):
         self.table_name = table_name
-        self.conn = psycopg2.connect(config.get_connection_string())
-        self.cur = self.conn.cursor()
+        self.config = config
+        self.primary_key = None
+        self.etl_columns = set()
+        self.all_columns = []
         
-    def __del__(self):
-        if hasattr(self, 'cur'):
-            self.cur.close()
-        if hasattr(self, 'conn'):
-            self.conn.close()
+        self._load_metadata()
     
-    def get_total_rows(self) -> int:
-        """Compter lignes totales"""
-        self.cur.execute(f'SELECT COUNT(*) FROM ods.{self.table_name}')
-        return self.cur.fetchone()[0]
-    
-    def analyze_column(self, column_name: str, total_rows: int) -> Dict:
-        """
-        Analyse complète d'une colonne
-        
-        Returns:
-            dict: {
-                'is_useful': bool,
-                'exclusion_reason': str,
-                'stats': {...}
-            }
-        """
-        if total_rows == 0:
-            return {
-                'is_useful': True,
-                'exclusion_reason': None,
-                'stats': {'total_rows': 0, 'distinct': 0, 'null_pct': 0}
-            }
+    def _load_metadata(self):
+        """Charge toutes les métadonnées depuis PostgreSQL"""
+        conn = psycopg2.connect(self.config.get_connection_string())
+        cur = conn.cursor()
         
         try:
-            # Stats de base
-            self.cur.execute(f"""
+            # 1. Récupérer PRIMARY KEY
+            cur.execute("""
+                SELECT a.attname
+                FROM pg_index i
+                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                WHERE i.indrelid = ('ods.' || %s)::regclass
+                  AND i.indisprimary
+            """, (self.table_name,))
+            
+            pk_result = cur.fetchone()
+            if pk_result:
+                self.primary_key = pk_result[0]
+                print(f"  🔑 Primary Key detected: {self.primary_key}")
+            else:
+                print(f"  ⚠️  No Primary Key found")
+            
+            # 2. Récupérer toutes les colonnes
+            cur.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'ods'
+                  AND table_name = %s
+                ORDER BY ordinal_position
+            """, (self.table_name,))
+            
+            self.all_columns = [row[0] for row in cur.fetchall()]
+            
+            # 3. Identifier les colonnes ETL présentes
+            for col in self.all_columns:
+                if col.startswith('_etl_'):
+                    self.etl_columns.add(col)
+            
+            if self.etl_columns:
+                print(f"  📊 ETL columns found: {', '.join(sorted(self.etl_columns))}")
+            
+        finally:
+            cur.close()
+            conn.close()
+
+
+class IndexReplicator:
+    """Gère la réplication des index depuis ODS vers PREP"""
+    
+    def __init__(self, config: DatabaseConfig):
+        self.config = config
+        
+    def get_ods_indexes(self, table_name: str) -> List[str]:
+        """Récupère les index ODS business (pas techniques ETL)"""
+        conn = psycopg2.connect(self.config.get_connection_string())
+        cur = conn.cursor()
+        
+        try:
+            cur.execute("""
                 SELECT 
-                    COUNT(DISTINCT "{column_name}") as distinct_count,
-                    COUNT(*) FILTER (WHERE "{column_name}" IS NULL) as null_count,
-                    COUNT(*) FILTER (WHERE "{column_name}" IS NOT NULL) as not_null_count
-                FROM ods.{self.table_name}
-            """)
+                    indexname,
+                    indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'ods' 
+                  AND tablename = %s
+                ORDER BY indexname
+            """, (table_name,))
             
-            distinct_count, null_count, not_null_count = self.cur.fetchone()
-            null_pct = (null_count / total_rows) * 100
+            indexes = []
             
-            stats = {
+            for idx_name, idx_def in cur.fetchall():
+                # Ignorer les index techniques ETL
+                if any(etl_col in idx_def.lower() for etl_col in 
+                       ['_etl_hashdiff', '_etl_valid_from', '_etl_valid_to', 
+                        'idx_ods_', 'upsert']):
+                    print(f"  ⏭️  Skipping ETL index: {idx_name}")
+                    continue
+                
+                # Adapter l'index pour PREP
+                adapted_idx = idx_def.replace(f'ON ods.{table_name}', 'ON {{ this }}')
+                
+                # Ajouter IF NOT EXISTS
+                if 'IF NOT EXISTS' not in adapted_idx:
+                    adapted_idx = adapted_idx.replace('CREATE INDEX', 'CREATE INDEX IF NOT EXISTS')
+                    adapted_idx = adapted_idx.replace('CREATE UNIQUE INDEX', 'CREATE UNIQUE INDEX IF NOT EXISTS')
+                
+                indexes.append(adapted_idx)
+                print(f"  ✅ Replicated index: {idx_name}")
+            
+            # Ajouter ANALYZE
+            if indexes:
+                indexes.append('ANALYZE {{ this }}')
+            
+            return indexes
+            
+        finally:
+            cur.close()
+            conn.close()
+
+
+class ColumnAnalyzer:
+    """Analyse les colonnes pour déterminer leur utilité"""
+    
+    def __init__(self, table_name: str, config: DatabaseConfig):
+        self.table_name = table_name
+        self.config = config
+        
+    def analyze_columns(self) -> Dict:
+        """Analyse toutes les colonnes de la table ODS"""
+        conn = psycopg2.connect(self.config.get_connection_string())
+        cur = conn.cursor()
+        
+        try:
+            # Récupérer les colonnes
+            cur.execute("""
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_schema = 'ods'
+                  AND table_name = %s
+                ORDER BY ordinal_position
+            """, (self.table_name,))
+            
+            columns = cur.fetchall()
+            
+            # Compter les lignes
+            cur.execute(f'SELECT COUNT(*) FROM ods.{self.table_name}')
+            total_rows = cur.fetchone()[0]
+            
+            analysis = {
                 'total_rows': total_rows,
-                'distinct': distinct_count,
-                'null_count': null_count,
-                'not_null_count': not_null_count,
-                'null_pct': null_pct,
-                'cardinality': distinct_count / not_null_count if not_null_count > 0 else 0
+                'total_columns': len(columns),
+                'columns': {}
             }
             
-            # Règles d'exclusion
-            exclusion_reason = self._evaluate_exclusion(column_name, stats)
+            print(f"\n📊 Analyzing {len(columns)} columns in ods.{self.table_name} ({total_rows:,} rows)...")
             
-            return {
-                'is_useful': exclusion_reason is None,
-                'exclusion_reason': exclusion_reason,
-                'stats': stats
-            }
+            for col_name, data_type in columns:
+                # Analyse basique : NULL%, cardinalité
+                cur.execute(f"""
+                    SELECT 
+                        COUNT(*) FILTER (WHERE "{col_name}" IS NULL) * 100.0 / NULLIF(COUNT(*), 0) as null_pct,
+                        COUNT(DISTINCT "{col_name}") as cardinality
+                    FROM ods.{self.table_name}
+                """)
+                
+                null_pct, cardinality = cur.fetchone()
+                
+                analysis['columns'][col_name] = {
+                    'data_type': data_type,
+                    'null_pct': float(null_pct) if null_pct else 0.0,
+                    'cardinality': cardinality or 0
+                }
             
-        except Exception as e:
-            # En cas d'erreur, on garde par sécurité
-            return {
-                'is_useful': True,
-                'exclusion_reason': None,
-                'stats': {'error': str(e)}
-            }
-    
-    def _evaluate_exclusion(self, column_name: str, stats: Dict) -> Optional[str]:
-        """
-        Évalue si une colonne doit être exclue
-        
-        Returns:
-            str: Raison d'exclusion, ou None si colonne utile
-        """
-        null_pct = stats['null_pct']
-        distinct = stats['distinct']
-        
-        # Règle 1 : 100% NULL
-        if null_pct == PrepConfig.NULL_THRESHOLD:
-            return "100% NULL"
-        
-        # Règle 2 : Valeur constante
-        if distinct == PrepConfig.CONSTANT_THRESHOLD and null_pct < 100:
-            return "Valeur constante (1 seule valeur)"
-        
-        # Règle 3 : >95% NULL + peu de valeurs
-        if (null_pct > PrepConfig.LOW_VALUE_NULL_PCT and 
-            distinct < PrepConfig.LOW_VALUE_DISTINCT):
-            return f">95% NULL ({null_pct:.1f}%) + {distinct} valeur(s) distincte(s)"
-        
-        # Règle 4 : Cardinalité extrêmement faible (hors colonnes de flags)
-        if (distinct == 2 and 
-            not any(pattern in column_name.lower() for pattern in ['flag', 'actif', 'is_', 'has_', 'ind_'])):
-            # Vérifier si c'est un vrai boolean ou juste 2 valeurs
-            self.cur.execute(f"""
-                SELECT DISTINCT "{column_name}"
-                FROM ods.{self.table_name}
-                WHERE "{column_name}" IS NOT NULL
-                LIMIT 2
-            """)
-            values = [row[0] for row in self.cur.fetchall()]
+            return analysis
             
-            # Si pas boolean-like, peut-être peu utile
-            if not self._is_boolean_like(values):
-                return f"Cardinalité très faible (2 valeurs: {values})"
-        
-        return None
-    
-    def _is_boolean_like(self, values: List) -> bool:
-        """Vérifie si les valeurs ressemblent à un boolean"""
-        bool_patterns = [
-            {True, False}, {'1', '0'}, {'Y', 'N'}, 
-            {'OUI', 'NON'}, {'yes', 'no'}, {1, 0}
-        ]
-        value_set = set(str(v).upper() for v in values)
-        return any(value_set == pattern or 
-                   value_set == {str(v).upper() for v in pattern} 
-                   for pattern in bool_patterns)
-    
-    def detect_correlated_columns(self, columns: List[str]) -> List[Tuple[str, str, float]]:
-        """
-        Détecte les colonnes potentiellement corrélées (redondantes)
-        
-        Returns:
-            List[(col1, col2, correlation_score)]
-        """
-        correlations = []
-        
-        # Chercher patterns nom similaires
-        for i, col1 in enumerate(columns):
-            for col2 in columns[i+1:]:
-                # Pattern : _ht vs _ttc, _net vs _brut, etc.
-                if self._are_potentially_correlated(col1, col2):
-                    try:
-                        score = self._compute_correlation(col1, col2)
-                        if score > PrepConfig.CORRELATION_THRESHOLD:
-                            correlations.append((col1, col2, score))
-                    except:
-                        pass
-        
-        return correlations
-    
-    def _are_potentially_correlated(self, col1: str, col2: str) -> bool:
-        """Vérifie si 2 colonnes sont potentiellement corrélées par leur nom"""
-        col1_lower = col1.lower()
-        col2_lower = col2.lower()
-        
-        # Même base avec suffixes différents
-        for pattern1, pattern2 in PrepConfig.CALCULATED_PATTERNS:
-            base1 = col1_lower.replace(pattern1, '').replace(pattern2, '')
-            base2 = col2_lower.replace(pattern1, '').replace(pattern2, '')
-            if base1 == base2 and base1:
-                return True
-        
-        return False
-    
-    def _compute_correlation(self, col1: str, col2: str) -> float:
-        """
-        Calcule un score de corrélation entre 2 colonnes
-        (simplifié : ratio de lignes où col1 = col2 ou relation linéaire)
-        """
-        self.cur.execute(f"""
-            SELECT 
-                COUNT(*) as total,
-                COUNT(*) FILTER (WHERE "{col1}" = "{col2}") as equal_count
-            FROM ods.{self.table_name}
-            WHERE "{col1}" IS NOT NULL AND "{col2}" IS NOT NULL
-        """)
-        
-        total, equal_count = self.cur.fetchone()
-        if total == 0:
-            return 0.0
-        
-        return equal_count / total
+        finally:
+            cur.close()
+            conn.close()
 
-
-# ============================================================================
-# FILTRAGE COLONNES
-# ============================================================================
 
 class ColumnFilter:
-    """Filtre les colonnes selon règles métier"""
+    """Filtre les colonnes selon des règles métier DYNAMIQUES"""
     
-    def __init__(self, table_name: str, keep_columns: Set[str] = None, 
-                 exclude_columns: Set[str] = None):
+    def __init__(self, table_name: str, metadata: TableMetadata):
         self.table_name = table_name
-        self.keep_columns = keep_columns or set()
-        self.exclude_columns = exclude_columns or set()
-        self.analyzer = ColumnAnalyzer(table_name)
+        self.metadata = metadata
         
-    def filter_columns(self, columns: List[str]) -> Tuple[List[str], Dict]:
-        """
-        Filtre colonnes selon pertinence
+        # Colonnes ETL à TOUJOURS exclure (techniques SCD2)
+        self.always_exclude = {
+            '_etl_hashdiff',
+            '_etl_valid_to'
+        }
         
-        Returns:
-            (columns_to_keep, analysis_report)
-        """
-        print(f"  [ANALYZE] Analyse de {self.table_name}...")
+        # Préfixes de colonnes métier importantes
+        self.important_prefixes = [
+            'cod_', 'num_', 'no_',  # Identifiants
+            'dat_', 'date_',  # Dates
+            'usr_', 'qui_',  # Utilisateurs
+            'mnt_', 'qte_', 'px_', 'prix_', 'mt_'  # Montants/quantités
+        ]
         
-        total_rows = self.analyzer.get_total_rows()
+    def should_keep_column(self, col_name: str, col_info: Dict) -> Tuple[bool, str]:
+        """Détermine si une colonne doit être gardée"""
+        col_lower = col_name.lower()
         
-        columns_to_keep = []
-        analysis_report = {
-            'table': self.table_name,
-            'total_rows': total_rows,
-            'total_columns': len(columns),
-            'kept_columns': 0,
+        # 1. Toujours exclure les colonnes techniques SCD2
+        if col_name in self.always_exclude:
+            return (False, "excluded_etl_scd2")
+        
+        # 2. TOUJOURS garder la PRIMARY KEY
+        if col_name == self.metadata.primary_key:
+            return (True, "primary_key")
+        
+        # 3. Garder les colonnes ETL utiles (_etl_run_id, _etl_loaded_at)
+        if col_name in self.metadata.etl_columns:
+            if col_name in ['_etl_run_id', '_etl_loaded_at', '_etl_valid_from']:
+                return (True, "etl_useful")
+            # Autres colonnes ETL : décider selon utilité
+            return (False, "etl_not_needed")
+        
+        # 4. Garder si correspond à un préfixe important
+        for prefix in self.important_prefixes:
+            if col_lower.startswith(prefix):
+                return (True, f"pattern_{prefix}")
+        
+        # 5. Exclure si 100% NULL
+        if col_info['null_pct'] >= 100.0:
+            return (False, "100%_null")
+        
+        # 6. Exclure si constante (cardinalité = 1 et non NULL)
+        if col_info['cardinality'] == 1 and col_info['null_pct'] < 100.0:
+            return (False, "constant")
+        
+        # 7. Exclure si >95% NULL et faible cardinalité
+        if col_info['null_pct'] > 95.0 and col_info['cardinality'] < 5:
+            return (False, "low_value")
+        
+        # 8. Garder par défaut
+        return (True, "default_keep")
+    
+    def filter_columns(self, analysis: Dict) -> Tuple[List[str], Dict]:
+        """Filtre les colonnes selon les règles"""
+        useful_columns = []
+        report = {
             'excluded_etl': 0,
             'excluded_null': 0,
             'excluded_constant': 0,
             'excluded_low_value': 0,
-            'excluded_user': 0,
-            'forced_keep': 0,
-            'details': [],
-            'correlations': []
+            'kept_columns': 0
         }
         
-        for col in columns:
-            col_lower = col.lower()
+        for col_name, col_info in analysis['columns'].items():
+            keep, reason = self.should_keep_column(col_name, col_info)
             
-            # 1. User blacklist
-            if col_lower in self.exclude_columns:
-                analysis_report['excluded_user'] += 1
-                analysis_report['details'].append({
-                    'column': col,
-                    'status': 'EXCLUDED',
-                    'reason': 'Blacklist utilisateur'
-                })
-                continue
-            
-            # 2. User whitelist (force keep)
-            if col_lower in self.keep_columns:
-                columns_to_keep.append(col)
-                analysis_report['forced_keep'] += 1
-                analysis_report['kept_columns'] += 1
-                analysis_report['details'].append({
-                    'column': col,
-                    'status': 'KEPT',
-                    'reason': 'Whitelist utilisateur (forcé)'
-                })
-                continue
-            
-            # 3. Exclure colonnes ETL techniques
-            if col_lower in PrepConfig.ETL_EXCLUDE:
-                analysis_report['excluded_etl'] += 1
-                analysis_report['details'].append({
-                    'column': col,
-                    'status': 'EXCLUDED',
-                    'reason': 'Colonne technique ETL'
-                })
-                continue
-            
-            # 4. Toujours garder colonnes critiques
-            if col_lower in PrepConfig.ALWAYS_KEEP:
-                columns_to_keep.append(col)
-                analysis_report['kept_columns'] += 1
-                analysis_report['details'].append({
-                    'column': col,
-                    'status': 'KEPT',
-                    'reason': 'Colonne critique (toujours gardée)'
-                })
-                continue
-            
-            # 5. Analyser utilité
-            result = self.analyzer.analyze_column(col, total_rows)
-            
-            if result['is_useful']:
-                columns_to_keep.append(col)
-                analysis_report['kept_columns'] += 1
-                analysis_report['details'].append({
-                    'column': col,
-                    'status': 'KEPT',
-                    'reason': 'Colonne utile',
-                    'stats': result['stats']
-                })
+            if keep:
+                useful_columns.append(col_name)
+                report['kept_columns'] += 1
             else:
-                # Catégoriser exclusion
-                reason = result['exclusion_reason']
-                if 'NULL' in reason:
-                    analysis_report['excluded_null'] += 1
-                elif 'constante' in reason:
-                    analysis_report['excluded_constant'] += 1
-                else:
-                    analysis_report['excluded_low_value'] += 1
-                
-                analysis_report['details'].append({
-                    'column': col,
-                    'status': 'EXCLUDED',
-                    'reason': reason,
-                    'stats': result['stats']
-                })
+                if 'etl' in reason:
+                    report['excluded_etl'] += 1
+                elif reason == '100%_null':
+                    report['excluded_null'] += 1
+                elif reason == 'constant':
+                    report['excluded_constant'] += 1
+                elif reason == 'low_value':
+                    report['excluded_low_value'] += 1
         
-        # 6. Détecter colonnes corrélées
-        correlations = self.analyzer.detect_correlated_columns(columns_to_keep)
-        if correlations:
-            analysis_report['correlations'] = [
-                {'col1': c1, 'col2': c2, 'score': score}
-                for c1, c2, score in correlations
-            ]
-            print(f"  [WARN] {len(correlations)} paire(s) de colonnes corrélées détectée(s)")
+        report['total_columns'] = analysis['total_columns']
+        report['total_rows'] = analysis['total_rows']
         
-        return columns_to_keep, analysis_report
+        return useful_columns, report
 
-
-# ============================================================================
-# GÉNÉRATION MODÈLES
-# ============================================================================
 
 def generate_prep_model(table_name: str, columns: List[str], 
-                        analysis: Dict) -> str:
-    """Génère le contenu SQL du modèle PREP"""
+                        analysis: Dict, indexes: List[str],
+                        metadata: TableMetadata) -> str:
+    """Génère le contenu SQL du modèle PREP avec MERGE incrémental"""
     
+    # Déterminer la stratégie
+    unique_key = metadata.primary_key
+    has_etl_valid_from = '_etl_valid_from' in columns
+    has_etl_run_id = '_etl_run_id' in columns
+    
+    if not unique_key:
+        print(f"  ⚠️  No PRIMARY KEY, using TABLE (full refresh)")
+        materialization = 'table'
+        incremental_strategy = None
+    else:
+        print(f"  ✅ MERGE enabled with unique_key: {unique_key}")
+        materialization = 'incremental'
+        incremental_strategy = 'merge'
+    
+    # Config dbt
+    if incremental_strategy:
+        config_lines = [
+            f"    materialized='{materialization}',",
+            f"    unique_key='{unique_key.lower()}',",
+            f"    incremental_strategy='{incremental_strategy}',",
+            "    on_schema_change='sync_all_columns',"
+        ]
+    else:
+        config_lines = [
+            f"    materialized='{materialization}',"
+        ]
+    
+    # Post-hooks pour index + cleanup des lignes supprimées
+    post_hooks = []
+    
+    # Ajouter les index (déjà entre guillemets)
+    if indexes:
+        post_hooks.extend([f'"{idx}"' for idx in indexes])
+    
+    # Ajouter le cleanup des lignes supprimées (si incremental)
+    # Utiliser {{ this }} et {{ source() }} sans guillemets supplémentaires
+    if incremental_strategy and unique_key:
+        # Générer le SQL brut sans guillemets pour éviter les problèmes d'échappement
+        cleanup_sql = f"DELETE FROM {{{{ this }}}} WHERE {unique_key.lower()} NOT IN (SELECT {unique_key.lower()} FROM {{{{ source('ods', '{table_name}') }}}})"
+        # Utiliser repr() pour échapper correctement
+        post_hooks.append(f'"{cleanup_sql}"') 
+        print(f"  ✅ DELETE orphaned rows enabled")
+    
+    if post_hooks:
+        post_hooks_str = ',\n        '.join(post_hooks)
+        config_lines.append(f"""    post_hook=[
+        {post_hooks_str}
+    ]""")
+    
+    config_block = "{{ config(\n" + "\n".join(config_lines) + "\n) }}"
+    
+    # Générer les colonnes
     cols_list = []
-    for col in columns:
-        # Fix: Remplacer tirets par underscores
-        alias = col.lower().replace('-', '_')
-        cols_list.append(f'    "{col}" AS {alias}')
 
-    select_block = ",\n".join(cols_list)
+    for col in columns:
+        alias = col.lower().replace('-', '_')
+        if col == '_etl_valid_from':
+            cols_list.append(f'    "{col}" AS _etl_source_timestamp')
+        else:
+            cols_list.append(f'    "{col}" AS {alias}')
+
+    # Ajouter colonne de chargement PREP
+    cols_list.append(f'    CURRENT_TIMESTAMP AS _prep_loaded_at')
     
-    # Metadata du modèle
+    # Créer le bloc SELECT
+    select_block = ",\n".join(cols_list)
+
+    # Bloc WHERE/AND pour incrémental
+    incremental_block = ""
+    
+    if incremental_strategy == 'merge' and has_etl_valid_from:
+        # Incrémental basé sur _etl_valid_from
+        incremental_block = """
+
+{% if is_incremental() %}
+    WHERE "_etl_valid_from" > (
+        SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp) 
+        FROM {{ this }}
+    )
+{% endif %}"""
+        print(f"  ✅ Incremental loading enabled (_etl_valid_from)")
+    elif incremental_strategy == 'merge':
+        print(f"  ⚠️  MERGE without _etl_valid_from: will reload all rows each run")
+    
     excluded_count = analysis['total_columns'] - analysis['kept_columns']
     
-    sql = f"""{{{{ config(materialized='view') }}}}
+    sql = f"""{config_block}
 
 /*
     ============================================================================
@@ -431,8 +404,14 @@ def generate_prep_model(table_name: str, columns: List[str],
     Source       : ods.{table_name}
     Lignes       : {analysis['total_rows']:,}
     Colonnes ODS : {analysis['total_columns']}
-    Colonnes PREP: {analysis['kept_columns']}
+    Colonnes PREP: {analysis['kept_columns'] + 1}  (+ _prep_loaded_at)
     Exclues      : {excluded_count} ({100*excluded_count/analysis['total_columns']:.1f}%)
+    
+    Stratégie    : {materialization.upper()}
+    {'Unique Key  : ' + unique_key if unique_key else 'Full Refresh: Oui'}
+    Merge        : {'INSERT/UPDATE + DELETE orphans' if incremental_strategy == 'merge' else 'N/A'}
+    Incremental  : {'Enabled (_etl_valid_from)' if has_etl_valid_from else 'Disabled (full reload)'}
+    Index        : {len(indexes) if indexes else 0} répliqué(s){' + ANALYZE' if indexes else ''}
     
     Exclusions:
       - Techniques ETL  : {analysis['excluded_etl']}
@@ -444,313 +423,158 @@ def generate_prep_model(table_name: str, columns: List[str],
 
 SELECT
 {select_block}
-FROM {{{{ source('ods', '{table_name}') }}}}
+FROM {{{{ source('ods', '{table_name}') }}}}{incremental_block}
 """
     return sql
 
 
-# ============================================================================
-# RAPPORTS
-# ============================================================================
-
-class ReportGenerator:
-    """Génération rapports d'analyse"""
+def process_single_table(table_name: str, config: DatabaseConfig, output_dir: Path, 
+                         dry_run: bool) -> Tuple[str, Dict]:
+    """Traite une seule table"""
+    print(f"\n{'='*80}")
+    print(f"🔄 Processing table: {table_name}")
+    print(f"{'='*80}")
     
-    @staticmethod
-    def generate_markdown(all_reports: Dict[str, Dict]) -> str:
-        """Génère rapport Markdown"""
-        
-        lines = [
-            "# 📊 Rapport d'Analyse PREP - Version Complète",
-            "",
-            f"**Généré le** : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            "",
-            "---",
-            "",
-            "## 🎯 Résumé Global",
-            ""
-        ]
-        
-        # Stats globales
-        total_tables = len(all_reports)
-        total_rows = sum(r['total_rows'] for r in all_reports.values())
-        total_cols = sum(r['total_columns'] for r in all_reports.values())
-        total_kept = sum(r['kept_columns'] for r in all_reports.values())
-        total_excl = total_cols - total_kept
-        
-        lines.extend([
-            f"| Métrique | Valeur |",
-            f"|----------|--------|",
-            f"| **Tables analysées** | {total_tables} |",
-            f"| **Lignes totales** | {total_rows:,} |",
-            f"| **Colonnes ODS** | {total_cols:,} |",
-            f"| **Colonnes PREP** | {total_kept:,} ({100*total_kept/total_cols:.1f}%) |",
-            f"| **Colonnes exclues** | {total_excl:,} ({100*total_excl/total_cols:.1f}%) |",
-            "",
-            "### 📉 Raisons d'Exclusion",
-            ""
-        ])
-        
-        total_etl = sum(r['excluded_etl'] for r in all_reports.values())
-        total_null = sum(r['excluded_null'] for r in all_reports.values())
-        total_const = sum(r['excluded_constant'] for r in all_reports.values())
-        total_low = sum(r['excluded_low_value'] for r in all_reports.values())
-        total_user = sum(r['excluded_user'] for r in all_reports.values())
-        
-        lines.extend([
-            f"- 🔧 **Colonnes techniques ETL** : {total_etl}",
-            f"- ❌ **Colonnes 100% NULL** : {total_null}",
-            f"- 📌 **Colonnes constantes** : {total_const}",
-            f"- ⚠️ **Colonnes faible valeur** : {total_low}",
-            f"- 🚫 **Blacklist utilisateur** : {total_user}",
-            "",
-            "---",
-            "",
-            "## 📋 Détail par Table",
-            ""
-        ])
-        
-        # Détail tables
-        for table_name in sorted(all_reports.keys()):
-            report = all_reports[table_name]
-            excl = report['total_columns'] - report['kept_columns']
-            
-            lines.extend([
-                f"### 📦 {table_name}",
-                ""
-            ])
-            
-            # Stats table
-            lines.extend([
-                f"| Métrique | Valeur |",
-                f"|----------|--------|",
-                f"| Lignes | {report['total_rows']:,} |",
-                f"| Colonnes ODS | {report['total_columns']} |",
-                f"| Colonnes PREP | {report['kept_columns']} |",
-                f"| Exclues | {excl} |",
-                ""
-            ])
-            
-            # Colonnes exclues
-            excluded = [d for d in report['details'] if d['status'] == 'EXCLUDED']
-            if excluded:
-                lines.extend([
-                    "**Colonnes exclues :**",
-                    "",
-                    "| Colonne | Raison | Stats |",
-                    "|---------|--------|-------|"
-                ])
-                
-                for detail in excluded:
-                    stats_str = ""
-                    if 'stats' in detail and 'null_pct' in detail['stats']:
-                        stats_str = f"{detail['stats']['null_pct']:.1f}% NULL, {detail['stats']['distinct']} val."
-                    lines.append(f"| `{detail['column']}` | {detail['reason']} | {stats_str} |")
-                
-                lines.append("")
-            
-            # Corrélations détectées
-            if report.get('correlations'):
-                lines.extend([
-                    "**⚠️ Colonnes corrélées détectées :**",
-                    ""
-                ])
-                for corr in report['correlations']:
-                    lines.append(f"- `{corr['col1']}` ↔️ `{corr['col2']}` (score: {corr['score']:.2%})")
-                lines.append("")
-            
-            lines.append("")
-        
-        return "\n".join(lines)
+    # 1. Charger les métadonnées
+    metadata = TableMetadata(table_name, config)
     
-    @staticmethod
-    def generate_json(all_reports: Dict[str, Dict], output_file: Path):
-        """Génère rapport JSON"""
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(all_reports, f, indent=2, default=str)
+    # 2. Analyser les colonnes
+    analyzer = ColumnAnalyzer(table_name, config)
+    analysis = analyzer.analyze_columns()
+    
+    # 3. Filtrer les colonnes
+    filter_obj = ColumnFilter(table_name, metadata)
+    useful_cols, report = filter_obj.filter_columns(analysis)
+    
+    print(f"\n📊 Column Analysis:")
+    print(f"  Total columns : {report['total_columns']}")
+    print(f"  Kept columns  : {report['kept_columns']}")
+    print(f"  Excluded      : {report['total_columns'] - report['kept_columns']} ({100*(report['total_columns'] - report['kept_columns'])/report['total_columns']:.1f}%)")
+    
+    # 4. Récupérer les index ODS
+    print(f"\n🔍 Replicating indexes from ODS...")
+    index_replicator = IndexReplicator(config)
+    indexes = index_replicator.get_ods_indexes(table_name)
+    
+    if indexes:
+        print(f"  ✅ {len(indexes) - 1} business indexes + ANALYZE")
+    else:
+        print(f"  ⚠️  No indexes found in ODS")
+    
+    # 5. Générer le modèle SQL
+    if not dry_run:
+        model_file = output_dir / f"{table_name}.sql"
+        content = generate_prep_model(table_name, useful_cols, report, indexes, metadata)
+        
+        with open(model_file, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        print(f"\n✅ Generated: {model_file}")
+    else:
+        print(f"\n🔍 DRY RUN: Would generate {table_name}.sql")
+    
+    return (table_name, report)
 
-
-# ============================================================================
-# MAIN
-# ============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Générateur intelligent de modèles dbt PREP',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Exemples:
-  # Toutes les tables
-  python %(prog)s
-  
-  # Une table spécifique
-  python %(prog)s --table client
-  
-  # Dry-run (aperçu)
-  python %(prog)s --table produit --dry-run
-  
-  # Forcer inclusion
-  python %(prog)s --table client --keep "email,telephone"
-  
-  # Exclure colonnes
-  python %(prog)s --exclude "zal,zda,zlo,znu,zta"
-        """
-    )
+    """Point d'entrée principal"""
+    import argparse
     
-    parser.add_argument('--table', '-t', 
-                        help='Nom de la table à traiter (défaut: toutes)')
-    parser.add_argument('--dry-run', '-d', action='store_true',
-                        help='Aperçu sans génération fichiers')
-    parser.add_argument('--keep', '-k',
-                        help='Colonnes à forcer (séparées par virgule)')
-    parser.add_argument('--exclude', '-e',
-                        help='Colonnes à exclure (séparées par virgule)')
-    parser.add_argument('--output', '-o', default=None,
-                        help='Répertoire de sortie (défaut: dbt/models/prep)')
+    parser = argparse.ArgumentParser(description='Génère les modèles dbt PREP (100% dynamique)')
+    parser.add_argument('--table', type=str, help='Traiter une seule table')
+    parser.add_argument('--dry-run', action='store_true', help='Mode simulation')
+    parser.add_argument('--parallel', type=int, default=4, help='Nombre de workers parallèles')
     
     args = parser.parse_args()
     
-    # Parse keep/exclude
-    keep_cols = set(args.keep.lower().split(',')) if args.keep else set()
-    excl_cols = set(args.exclude.lower().split(',')) if args.exclude else set()
+    # Configuration
+    config = DatabaseConfig()
+    dbt_project_dir = Path(os.getenv('ETL_DBT_PROJECT', 'E:/Prefect/projects/ETL/dbt/etl_db'))
+    output_dir = dbt_project_dir / 'models' / 'prep'
     
-    print("=" * 70)
-    print("🚀 GÉNÉRATEUR PREP INTELLIGENT - Version Ultra-Complète")
-    print("=" * 70)
-    print(f"Mode         : {'DRY-RUN' if args.dry_run else 'PRODUCTION'}")
-    print(f"Table(s)     : {args.table or 'TOUTES'}")
-    if keep_cols:
-        print(f"Whitelist    : {', '.join(keep_cols)}")
-    if excl_cols:
-        print(f"Blacklist    : {', '.join(excl_cols)}")
-    print("")
+    print(f"\n{'='*80}")
+    print(f"🚀 PREP Model Generator - 100% DYNAMIC")
+    print(f"{'='*80}")
+    print(f"Project dir : {dbt_project_dir}")
+    print(f"Output dir  : {output_dir}")
+    print(f"Mode        : {'DRY RUN' if args.dry_run else 'WRITE'}")
     
-    # Déterminer output dir
-    if args.output:
-        output_dir = Path(args.output)
-    else:
-        output_dir = Path(config.dbt_project_dir) / "models" / "prep"
+    # Créer le répertoire si nécessaire
+    if not args.dry_run:
+        output_dir.mkdir(parents=True, exist_ok=True)
     
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Connexion DB
-    print("[INFO] Connexion à PostgreSQL...")
-    conn = psycopg2.connect(config.get_connection_string())
-    cur = conn.cursor()
-    
-    # Lister tables
+    # Déterminer les tables à traiter
     if args.table:
-        tables_query = """
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'ods' 
-              AND table_name = %s
-        """
-        cur.execute(tables_query, (args.table.lower(),))
+        tables = [args.table]
     else:
-        tables_query = """
+        # Récupérer toutes les tables ODS
+        conn = psycopg2.connect(config.get_connection_string())
+        cur = conn.cursor()
+        cur.execute("""
             SELECT table_name 
             FROM information_schema.tables 
             WHERE table_schema = 'ods'
             ORDER BY table_name
-        """
-        cur.execute(tables_query)
+        """)
+        tables = [row[0] for row in cur.fetchall()]
+        cur.close()
+        conn.close()
     
-    tables = [row[0] for row in cur.fetchall()]
+    print(f"\n📋 Tables to process: {len(tables)}")
     
-    if not tables:
-        print(f"[ERROR] Aucune table trouvée (filtre: {args.table or 'aucun'})")
-        return
-    
-    print(f"[DATA] {len(tables)} table(s) à traiter")
-    print("")
-    
-    # Récupérer structures
-    table_structures = {}
-    for table in tables:
-        cur.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_schema = 'ods' 
-              AND table_name = %s
-            ORDER BY ordinal_position
-        """, (table,))
-        table_structures[table] = [row[0] for row in cur.fetchall()]
-    
-    cur.close()
-    conn.close()
-    
-    # Traiter chaque table
+    # Traiter les tables
     all_reports = {}
     
-    for table_name, columns in table_structures.items():
-        print(f"{'='*70}")
-        print(f"📊 Table: {table_name} ({len(columns)} colonnes)")
-        print(f"{'='*70}")
-        
-        # Filtrer colonnes
-        filter_obj = ColumnFilter(table_name, keep_cols, excl_cols)
-        useful_cols, report = filter_obj.filter_columns(columns)
-        all_reports[table_name] = report
-        
-        excl_count = report['total_columns'] - report['kept_columns']
-        print(f"  ✅ Conservées : {report['kept_columns']}/{report['total_columns']} colonnes")
-        print(f"  ❌ Exclues    : {excl_count} colonnes")
-        
-        if report.get('correlations'):
-            print(f"  ⚠️  Corrélations : {len(report['correlations'])} paire(s)")
-        
-        # Générer SQL
-        if not args.dry_run:
-            model_file = output_dir / f"prep_{table_name}.sql"
-            content = generate_prep_model(table_name, useful_cols, report)
+    if args.table or len(tables) == 1:
+        # Mode séquentiel pour une seule table
+        for table_name in tables:
+            table_name, report = process_single_table(
+                table_name, config, output_dir, args.dry_run
+            )
+            all_reports[table_name] = report
+    else:
+        # Mode parallèle pour plusieurs tables
+        with ThreadPoolExecutor(max_workers=args.parallel) as executor:
+            futures = {
+                executor.submit(
+                    process_single_table, 
+                    table_name, config, output_dir, args.dry_run
+                ): table_name 
+                for table_name in tables
+            }
             
-            with open(model_file, 'w', encoding='utf-8') as f:
-                f.write(content)
-            
-            print(f"  📝 Généré: prep_{table_name}.sql")
-        else:
-            print(f"  🔍 DRY-RUN: fichier NON généré")
-        
-        print("")
-    
-    # Générer rapports
-    print("=" * 70)
-    print("📄 Génération rapports...")
-    print("=" * 70)
-    
-    # Markdown
-    md_file = Path(config.dbt_project_dir) / "PREP_ANALYSIS_REPORT.md"
-    with open(md_file, 'w', encoding='utf-8') as f:
-        f.write(ReportGenerator.generate_markdown(all_reports))
-    print(f"  ✅ Markdown : {md_file}")
-    
-    # JSON
-    json_file = Path(config.dbt_project_dir) / "PREP_ANALYSIS_REPORT.json"
-    ReportGenerator.generate_json(all_reports, json_file)
-    print(f"  ✅ JSON     : {json_file}")
+            for future in as_completed(futures):
+                table_name = futures[future]
+                try:
+                    table_name, report = future.result()
+                    all_reports[table_name] = report
+                except Exception as exc:
+                    print(f"\n❌ Error processing {table_name}: {exc}")
     
     # Résumé final
-    total_cols = sum(r['total_columns'] for r in all_reports.values())
-    total_kept = sum(r['kept_columns'] for r in all_reports.values())
-    reduction = 100 * (1 - total_kept/total_cols)
+    print(f"\n{'='*80}")
+    print(f"📊 FINAL SUMMARY")
+    print(f"{'='*80}")
+    print(f"Tables processed : {len(all_reports)}")
     
-    print("")
-    print("=" * 70)
-    print("✅ TERMINÉ")
-    print("=" * 70)
-    print(f"Tables traitées    : {len(all_reports)}")
-    print(f"Colonnes ODS       : {total_cols}")
-    print(f"Colonnes PREP      : {total_kept}")
-    print(f"Réduction          : {reduction:.1f}%")
+    total_ods_cols = sum(r['total_columns'] for r in all_reports.values())
+    total_prep_cols = sum(r['kept_columns'] for r in all_reports.values())
     
-    if args.dry_run:
-        print("")
-        print("ℹ️  Mode DRY-RUN : Aucun fichier généré")
-        print("   Relancer sans --dry-run pour générer les modèles")
+    print(f"Total ODS columns  : {total_ods_cols:,}")
+    print(f"Total PREP columns : {total_prep_cols:,}")
+    print(f"Reduction          : {100*(total_ods_cols-total_prep_cols)/total_ods_cols:.1f}%")
     
-    print("=" * 70)
+    # Sauvegarder le rapport
+    if not args.dry_run:
+        report_file = dbt_project_dir / 'PREP_ANALYSIS_REPORT.json'
+        with open(report_file, 'w', encoding='utf-8') as f:
+            json.dump(all_reports, f, indent=2)
+        print(f"\n✅ Report saved: {report_file}")
+    
+    print(f"\n{'='*80}")
+    print(f"✅ DONE - 100% DYNAMIC")
+    print(f"{'='*80}\n")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

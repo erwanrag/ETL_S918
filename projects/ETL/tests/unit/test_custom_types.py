@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from utils.custom_types import get_pg_type, build_table_columns_sql
 
 def test_get_pg_type_basic():

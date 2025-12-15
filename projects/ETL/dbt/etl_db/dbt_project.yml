@@ -32,5 +32,8 @@ clean-targets:         # directories to be removed by `dbt clean`
 models:
   etl_db: 
     prep:
-      +materialized: view
-      +schema: prep
+      +materialized: table
+      
+    analytics:
+      +materialized: table
+      

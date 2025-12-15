@@ -1,0 +1,90 @@
+version: 2
+
+sources:
+  - name: ods
+    description: "Operational Data Store - Source des modeles prep"
+    schema: ods
+    tables:
+      - name: clcondi
+        description: "Conditions clients"
+      
+      - name: client
+        description: "Clients"
+      
+      - name: crn
+        description: "CRN"
+      
+      - name: crnar
+        description: "CRN Articles"
+      
+      - name: deppro
+        description: "Depôts produits"
+      
+      - name: entetcli
+        description: "Entêtes commandes clients"
+      
+      - name: entetfou
+        description: "Entêtes commandes fournisseurs"
+      
+      - name: focondi
+        description: "Conditions fournisseurs"
+      
+      - name: fournis
+        description: "Fournisseurs"
+      
+      - name: hisprixa
+        description: "Historique prix achats"
+      
+      - name: histoent
+        description: "Historique entêtes"
+      
+      - name: histolig
+        description: "Historique lignes"
+      
+      - name: lignecli
+        description: "Lignes commandes clients"
+      
+      - name: lignefou
+        description: "Lignes commandes fournisseurs"
+      
+      - name: lisval
+        description: "Listes de valeurs"
+      
+      - name: lisval_fou_production
+        description: "Listes de valeurs - Fournisseurs production"
+      
+      - name: lisval_produits_lies
+        description: "Listes de valeurs - Produits lies"
+      
+      - name: lisval_produits_vehicules
+        description: "Listes de valeurs - Produits vehicules"
+      
+      - name: lisval_slimstock
+        description: "Listes de valeurs - Slimstock"
+      
+      - name: lldespro
+        description: "Libelles descriptions produits"
+      
+      - name: prmultfo
+        description: "Prix multiples fournisseurs"
+      
+      - name: prnomenc
+        description: "Nomenclatures produits"
+      
+      - name: produit
+        description: "Produits"
+      
+      - name: prprixv
+        description: "Prix de vente produits"
+      
+      - name: soumission
+        description: "Soumissions"
+      
+      - name: stock
+        description: "Stocks"
+      
+      - name: tabgco
+        description: "Tables de gestion commerciale"
+      
+      - name: typelem
+        description: "Types elements"

@@ -1,0 +1,160 @@
+{{ config(
+    materialized='table',
+) }}
+
+/*
+    ============================================================================
+    Modèle PREP : entetfou
+    ============================================================================
+    Généré automatiquement le 2025-12-12 16:39:58
+    
+    Source       : ods.entetfou
+    Lignes       : 6,495
+    Colonnes ODS : 270
+    Colonnes PREP: 128  (+ _prep_loaded_at)
+    Exclues      : 143 (53.0%)
+    
+    Stratégie    : TABLE
+    Full Refresh: Oui
+    Merge        : N/A
+    Incremental  : Enabled (_etl_valid_from)
+    Index        : 0 répliqué(s)
+    
+    Exclusions:
+      - Techniques ETL  : 5
+      - 100% NULL       : 82
+      - Constantes      : 56
+      - Faible valeur   : 0
+    ============================================================================
+*/
+
+SELECT
+    "cod_fou" AS cod_fou,
+    "typ_sai" AS typ_sai,
+    "no_cde" AS no_cde,
+    "achev" AS achev,
+    "dat_cde" AS dat_cde,
+    "dat_px" AS dat_px,
+    "qui" AS qui,
+    "ref_cde" AS ref_cde,
+    "dat_liv" AS dat_liv,
+    "depot" AS depot,
+    "civ_fac" AS civ_fac,
+    "adr_fac_1" AS adr_fac_1,
+    "adr_fac_2" AS adr_fac_2,
+    "adr_fac_3" AS adr_fac_3,
+    "villef" AS villef,
+    "paysf" AS paysf,
+    "num_tel" AS num_tel,
+    "num_fax" AS num_fax,
+    "civ_liv" AS civ_liv,
+    "adr_liv_1" AS adr_liv_1,
+    "adr_liv_2" AS adr_liv_2,
+    "adr_liv_3" AS adr_liv_3,
+    "villel" AS villel,
+    "paysl" AS paysl,
+    "devise" AS devise,
+    "code_reg" AS code_reg,
+    "code_ech" AS code_ech,
+    "langue" AS langue,
+    "regime" AS regime,
+    "mod_liv" AS mod_liv,
+    "mt_cde" AS mt_cde,
+    "dat_edi" AS dat_edi,
+    "zal_1" AS zal_1,
+    "zal_2" AS zal_2,
+    "zal_4" AS zal_4,
+    "znu_1" AS znu_1,
+    "znu_2" AS znu_2,
+    "znu_3" AS znu_3,
+    "znu_4" AS znu_4,
+    "zta_2" AS zta_2,
+    "zta_4" AS zta_4,
+    "zda_5" AS zda_5,
+    "usr_crt" AS usr_crt,
+    "dat_crt" AS dat_crt,
+    "usr_mod" AS usr_mod,
+    "dat_mod" AS dat_mod,
+    "txt_com" AS txt_com,
+    "txt_rec" AS txt_rec,
+    "cde_valo" AS cde_valo,
+    "verif_ach" AS verif_ach,
+    "type_fac" AS type_fac,
+    "blocage" AS blocage,
+    "sta_cde" AS sta_cde,
+    "edt_cde" AS edt_cde,
+    "edt_rec" AS edt_rec,
+    "mnt_rlk" AS mnt_rlk,
+    "zon_geo" AS zon_geo,
+    "transpor" AS transpor,
+    "famille" AS famille,
+    "arc" AS arc,
+    "mt_ht_dev" AS mt_ht_dev,
+    "zlo_1" AS zlo_1,
+    "zlo_3" AS zlo_3,
+    "k_post2f" AS k_post2f,
+    "k_post2l" AS k_post2l,
+    "ref_arc" AS ref_arc,
+    "sta_pce" AS sta_pce,
+    "regr" AS regr,
+    "cod_for" AS cod_for,
+    "cod_fof_1" AS cod_fof_1,
+    "cod_fof_2" AS cod_fof_2,
+    "cod_fof_3" AS cod_fof_3,
+    "cod_fof_4" AS cod_fof_4,
+    "cod_fof_5" AS cod_fof_5,
+    "cod_fof_6" AS cod_fof_6,
+    "cod_prof_1" AS cod_prof_1,
+    "cod_prof_2" AS cod_prof_2,
+    "cod_prof_3" AS cod_prof_3,
+    "cod_prof_4" AS cod_prof_4,
+    "cod_prof_5" AS cod_prof_5,
+    "cod_prof_6" AS cod_prof_6,
+    "inc_deb" AS inc_deb,
+    "trs_deb" AS trs_deb,
+    "semaine" AS semaine,
+    "adrfac4" AS adrfac4,
+    "adrliv4" AS adrliv4,
+    "ndos" AS ndos,
+    "st_interne" AS st_interne,
+    "dat_livd" AS dat_livd,
+    "dat_ech" AS dat_ech,
+    "no_info" AS no_info,
+    "dat_val" AS dat_val,
+    "qui_val" AS qui_val,
+    "poids" AS poids,
+    "colis" AS colis,
+    "palette" AS palette,
+    "mt_rport" AS mt_rport,
+    "typ_con" AS typ_con,
+    "transit" AS transit,
+    "volume" AS volume,
+    "retr_cess" AS retr_cess,
+    "dat_rel" AS dat_rel,
+    "dat_arc" AS dat_arc,
+    "arc_fax" AS arc_fax,
+    "arc_mail" AS arc_mail,
+    "dat_enl" AS dat_enl,
+    "typ_elem" AS typ_elem,
+    "no_ordre" AS no_ordre,
+    "no_ctbois" AS no_ctbois,
+    "hr_liv" AS hr_liv,
+    "mt_fact" AS mt_fact,
+    "dat_acc" AS dat_acc,
+    "no_ctrl_qua" AS no_ctrl_qua,
+    "no_of" AS no_of,
+    "no_lance" AS no_lance,
+    "com_golda" AS com_golda,
+    "uniq_id" AS uniq_id,
+    "metre_lin" AS metre_lin,
+    "creerparcli" AS creerparcli,
+    "informat" AS informat,
+    "acq_intra" AS acq_intra,
+    "pal_sol" AS pal_sol,
+    "annonce" AS annonce,
+    "cod_fop" AS cod_fop,
+    "_etl_loaded_at" AS _etl_loaded_at,
+    "_etl_run_id" AS _etl_run_id,
+    "_etl_valid_from" AS _etl_source_timestamp,
+    CURRENT_TIMESTAMP AS _prep_loaded_at
+FROM {{ source('ods', 'entetfou') }}
