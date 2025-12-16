@@ -20,7 +20,7 @@ sys.path.append(r'E:\Prefect\projects\ETL')
 from flows.config.pg_config import config
 
 # Import alerting
-from projects.shared.alerting.alert_manager import get_alert_manager, AlertLevel
+from shared.alerting.alert_manager import get_alert_manager, AlertLevel
 
 
 @task(name="📊 Générer Modèles PREP", retries=2, retry_delay_seconds=60)

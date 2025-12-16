@@ -1,39 +1,27 @@
 {{ config(
     materialized='incremental',
-    unique_key='cod_pro',
+    unique_key=['cod_pro', 'langue'],
     incremental_strategy='merge',
     on_schema_change='sync_all_columns',
     post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'lldespro') }} s WHERE s.cod_pro = t.cod_pro AND s.langue = t.langue){% endif %}",
+        "CREATE INDEX IF NOT EXISTS idx_lldespro_etl_source_timestamp ON {{ this }} USING btree (_etl_source_timestamp)",
         "CREATE UNIQUE INDEX IF NOT EXISTS lldespro_pkey ON {{ this }} USING btree (cod_pro, langue)",
-        "ANALYZE {{ this }}",
-        "DELETE FROM {{ this }} WHERE cod_pro NOT IN (SELECT cod_pro FROM {{ source('ods', 'lldespro') }})"
+        "ANALYZE {{ this }}"
     ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : lldespro
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:41:52
-    
-    Source       : ods.lldespro
-    Lignes       : 551,592
-    Colonnes ODS : 9
-    Colonnes PREP: 7  (+ _prep_loaded_at)
-    Exclues      : 3 (33.3%)
-    
-    Stratégie    : INCREMENTAL
-    Unique Key  : cod_pro
-    Merge        : INSERT/UPDATE + DELETE orphans
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 2 répliqué(s) + ANALYZE
-    
-    Exclusions:
-      - Techniques ETL  : 1
-      - 100% NULL       : 1
-      - Constantes      : 1
-      - Faible valeur   : 0
-    ============================================================================
+============================================================================
+PREP MODEL : lldespro
+============================================================================
+Generated : 2025-12-15 16:42:02
+Source    : ods.lldespro
+Rows ODS  : 551,597
+Cols ODS  : 9
+Cols PREP : 7 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -45,10 +33,9 @@ SELECT
     "_etl_run_id" AS _etl_run_id,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'lldespro') }}
-
 {% if is_incremental() %}
-    WHERE "_etl_valid_from" > (
-        SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp) 
-        FROM {{ this }}
-    )
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
 {% endif %}

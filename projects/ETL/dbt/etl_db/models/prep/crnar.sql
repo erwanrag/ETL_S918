@@ -1,39 +1,27 @@
 {{ config(
     materialized='incremental',
-    unique_key='cod_crn',
+    unique_key=['cod_crn', 'cod_pc'],
     incremental_strategy='merge',
     on_schema_change='sync_all_columns',
     post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'crnar') }} s WHERE s.cod_crn = t.cod_crn AND s.cod_pc = t.cod_pc){% endif %}",
         "CREATE UNIQUE INDEX IF NOT EXISTS crnar_pkey ON {{ this }} USING btree (cod_crn, cod_pc)",
-        "ANALYZE {{ this }}",
-        "DELETE FROM {{ this }} WHERE cod_crn NOT IN (SELECT cod_crn FROM {{ source('ods', 'crnar') }})"
+        "CREATE INDEX IF NOT EXISTS idx_crnar_etl_source_timestamp ON {{ this }} USING btree (_etl_source_timestamp)",
+        "ANALYZE {{ this }}"
     ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : crnar
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:40:05
-    
-    Source       : ods.crnar
-    Lignes       : 382,255
-    Colonnes ODS : 56
-    Colonnes PREP: 25  (+ _prep_loaded_at)
-    Exclues      : 32 (57.1%)
-    
-    Stratégie    : INCREMENTAL
-    Unique Key  : cod_crn
-    Merge        : INSERT/UPDATE + DELETE orphans
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 2 répliqué(s) + ANALYZE
-    
-    Exclusions:
-      - Techniques ETL  : 1
-      - 100% NULL       : 15
-      - Constantes      : 14
-      - Faible valeur   : 2
-    ============================================================================
+============================================================================
+PREP MODEL : crnar
+============================================================================
+Generated : 2025-12-15 16:41:07
+Source    : ods.crnar
+Rows ODS  : 382,359
+Cols ODS  : 56
+Cols PREP : 23 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -50,10 +38,8 @@ SELECT
     "zda_3" AS zda_3,
     "px_vte" AS px_vte,
     "marque" AS marque,
-    "zlo_1" AS zlo_1,
     "zlo_2" AS zlo_2,
     "texte" AS texte,
-    "pp_uv" AS pp_uv,
     "cod_pro" AS cod_pro,
     "poid_brut_1" AS poid_brut_1,
     "poid_brut_2" AS poid_brut_2,
@@ -63,10 +49,9 @@ SELECT
     "_etl_run_id" AS _etl_run_id,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'crnar') }}
-
 {% if is_incremental() %}
-    WHERE "_etl_valid_from" > (
-        SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp) 
-        FROM {{ this }}
-    )
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
 {% endif %}

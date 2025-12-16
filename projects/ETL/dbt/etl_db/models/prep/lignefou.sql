@@ -1,31 +1,26 @@
 {{ config(
-    materialized='table',
+    materialized='incremental',
+    unique_key='uniq_id',
+    incremental_strategy='merge',
+    on_schema_change='sync_all_columns',
+    post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'lignefou') }} s WHERE s.uniq_id = t.uniq_id){% endif %}",
+        "CREATE UNIQUE INDEX IF NOT EXISTS lignefou_pkey ON {{ this }} USING btree (uniq_id)",
+        "ANALYZE {{ this }}"
+    ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : lignefou
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:41:21
-    
-    Source       : ods.lignefou
-    Lignes       : 18,537
-    Colonnes ODS : 348
-    Colonnes PREP: 174  (+ _prep_loaded_at)
-    Exclues      : 175 (50.3%)
-    
-    Stratégie    : TABLE
-    Full Refresh: Oui
-    Merge        : N/A
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 0 répliqué(s)
-    
-    Exclusions:
-      - Techniques ETL  : 5
-      - 100% NULL       : 66
-      - Constantes      : 103
-      - Faible valeur   : 1
-    ============================================================================
+============================================================================
+PREP MODEL : lignefou
+============================================================================
+Generated : 2025-12-15 16:41:50
+Source    : ods.lignefou
+Rows ODS  : 18,952
+Cols ODS  : 348
+Cols PREP : 174 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -204,3 +199,9 @@ SELECT
     "_etl_valid_from" AS _etl_source_timestamp,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'lignefou') }}
+{% if is_incremental() %}
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
+{% endif %}

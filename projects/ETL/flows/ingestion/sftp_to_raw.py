@@ -2,12 +2,16 @@
 ============================================================================
 Flow Prefect : SFTP → RAW
 ============================================================================
-Responsabilité : Ingestion brute des fichiers SFTP dans PostgreSQL RAW
-- Pas de transformation
-- Pas de hashdiff
-- DROP + CREATE + COPY
-============================================================================
 """
+
+
+import sys
+import os
+
+
+# Imports normaux
+from pathlib import Path
+from datetime import datetime
 
 import os
 import json
@@ -37,7 +41,7 @@ def scan_sftp_directory():
     logger = get_run_logger()
     parquet_dir = Path(config.sftp_parquet_dir)
     files = list(parquet_dir.glob("*.parquet"))
-    logger.info(f"[DATA] {len(files)} fichier(s) trouvés")
+    logger.info(f"[DATA] {len(files)} fichier(s) trouves")
     return [str(f) for f in files]
 
 
@@ -88,13 +92,13 @@ def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
         status: Contenu du fichier *_status.json
     
     Returns:
-        int: log_id créé dans sftp_file_log
+        int: log_id cree dans sftp_file_log
     """
     logger = get_run_logger()
     file_name = os.path.basename(file_path)
     file_size = os.path.getsize(file_path)
 
-    # [OK] AMÉLIORATION : Structure metadata_json claire
+    # [OK] AMeLIORATION : Structure metadata_json claire
     full_meta = {
         "file_extension": ".parquet",
         "detected_timestamp": datetime.now().isoformat(),
@@ -102,7 +106,7 @@ def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
         "phase1_status": status or {}       # Contenu status.json
     }
 
-    # Log le load_mode détecté pour debug
+    # Log le load_mode detecte pour debug
     load_mode = None
     if status:
         load_mode = status.get('load_mode', 'UNKNOWN')
@@ -123,7 +127,7 @@ def log_file_to_monitoring(file_path: str, metadata: dict, status: dict):
         log_id = cur.fetchone()[0]
         conn.commit()
         
-        logger.info(f"[NOTE] Log ID {log_id} créé")
+        logger.info(f"[NOTE] Log ID {log_id} cree")
         
         return log_id
         
@@ -160,7 +164,7 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
     file_name = Path(parquet_path).name
     
     # ========================================================================
-    # ÉTAPE 1 : Parse et résout les noms avec validation
+    # eTAPE 1 : Parse et resout les noms avec validation
     # ========================================================================
     
     names = parse_and_resolve(file_name, metadata, strict=False)
@@ -186,7 +190,7 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
     logger.info("="*80)
     
     # ========================================================================
-    # ÉTAPE 2 : Construire nom table RAW
+    # eTAPE 2 : Construire nom table RAW
     # ========================================================================
     
     # Utiliser physical_name (qui prend ConfigName si existe)
@@ -196,7 +200,7 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
     logger.info(f"[TARGET] Table RAW : {full_table}")
     
     # ========================================================================
-    # ÉTAPE 3 : DROP table existante
+    # eTAPE 3 : DROP table existante
     # ========================================================================
     
     conn = psycopg2.connect(config.get_connection_string())
@@ -208,7 +212,7 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
         conn.commit()
         
         # ====================================================================
-        # ÉTAPE 4 : CREATE table avec schema Parquet
+        # eTAPE 4 : CREATE table avec schema Parquet
         # ====================================================================
         
         logger.info(f"[SCHEMA] Lecture schema Parquet")
@@ -258,7 +262,7 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
         engine.dispose()
         
         # ====================================================================
-        # ÉTAPE 5 : COPY données par batches
+        # eTAPE 5 : COPY donnees par batches
         # ====================================================================
         
         logger.info("[COPY] Chargement donnees (streaming)")
@@ -303,7 +307,13 @@ def load_to_raw(parquet_path: str, log_id: int, metadata: dict):
                 logger.info(f"  [{total_rows:,} lignes chargees]")
         
         conn.commit()
-
+        
+        # ============================================================
+        # ANALYZE OBLIGATOIRE (monitoring pg_stat_all_tables)
+        # ============================================================
+        logger.info(f"[ANALYZE] {full_table}")
+        cur.execute(f"ANALYZE {full_table};")
+        conn.commit()
 
         
         logger.info("="*80)
@@ -367,7 +377,7 @@ def sftp_to_raw_flow(table_filter=None):
     Args:
         table_filter: Liste des tables a traiter (None = toutes)
     
-    Étapes :
+    etapes :
     1. Scanner fichiers SFTP
     2. Charger dans raw.raw_{table} (DROP + CREATE + COPY)
     3. Archiver fichiers
@@ -393,17 +403,17 @@ def sftp_to_raw_flow(table_filter=None):
     
     for f in files:
         try:
-            # ÉTAPE 1 : Extraction rapide du nom de table depuis filename
+            # eTAPE 1 : Extraction rapide du nom de table depuis filename
             file_name = Path(f).name
             # Ex: focondi_20251211_050011.parquet → focondi
             table_name_from_file = file_name.split('_')[0]
             
-            # ÉTAPE 2 : FILTRAGE AVANT metadata check
+            # eTAPE 2 : FILTRAGE AVANT metadata check
             if table_filter and table_name_from_file not in table_filter:
                 logger.info(f"[FILTER] Skip {table_name_from_file} - non demande")
                 continue
             
-            # ÉTAPE 3 : Maintenant lire metadata
+            # eTAPE 3 : Maintenant lire metadata
             meta = read_metadata_json(f)
             status = read_status_json(f)
 

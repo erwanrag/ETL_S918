@@ -9,17 +9,18 @@ Responsabilite : Merger les donnees staging vers ODS
 ============================================================================
 """
 
+
+import sys
+import os
+
 from prefect import flow, task
 from prefect.logging import get_run_logger
 from typing import Optional, List
-import sys
 import psycopg2
 
 sys.path.append(r'E:\Prefect\projects\ETL')
 from flows.config.pg_config import config
 from tasks.ods_tasks import merge_ods_auto, verify_ods_after_merge
-
-
 
 
 @task(name="[DATA] List STAGING Tables")
@@ -98,11 +99,12 @@ def check_staging_table_has_data(table_name: str) -> bool:
         cur.close()
         conn.close()
 
+
 @task(name="[ODS] Merge Single Table", retries=1)
 def staging_to_ods_single_table(table_name: str, run_id: str, load_mode: str = "AUTO") -> dict:
     """
     Merge UNE SEULE table STAGING → ODS
-    Utilisé pour parallélisation avec .map()
+    Utilise pour parallelisation avec .map()
     
     Returns:
         {
@@ -115,7 +117,7 @@ def staging_to_ods_single_table(table_name: str, run_id: str, load_mode: str = "
     logger = get_run_logger()
     
     try:
-        # Vérifier si STAGING a des données
+        # Verifier si STAGING a des donnees
         conn = psycopg2.connect(config.get_connection_string())
         cur = conn.cursor()
         
@@ -127,7 +129,7 @@ def staging_to_ods_single_table(table_name: str, run_id: str, load_mode: str = "
         conn.close()
         
         if row_count == 0:
-            logger.warning(f"[SKIP] {table_name} : Aucune donnée dans STAGING")
+            logger.warning(f"[SKIP] {table_name} : Aucune donnee dans STAGING")
             return {
                 'table': table_name,
                 'rows': 0,
@@ -139,11 +141,11 @@ def staging_to_ods_single_table(table_name: str, run_id: str, load_mode: str = "
         # Merger
         result = merge_ods_auto(table_name, run_id, load_mode)
         
-        # Vérifier
+        # Verifier
         verify_result = verify_ods_after_merge(table_name, run_id)
         
         rows_affected = result.get('rows_affected', 0)
-        logger.info(f"[OK] {table_name} : {rows_affected:,} lignes affectées")
+        logger.info(f"[OK] {table_name} : {rows_affected:,} lignes affectees")
         
         return {
             'table': table_name,
@@ -237,6 +239,28 @@ def staging_to_ods_flow(
         logger.info(f"   [LIST] Tables skipped : {', '.join(tables_skipped)}")
     logger.info(f"   [DATA] Total lignes : {total_rows_affected:,}")
     logger.info("=" * 70)
+
+    # ============================================================
+    # ANALYZE ODS (indispensable pour monitoring pg_stat_all_tables)
+    # ============================================================
+    logger.info("[ANALYZE] Schema ODS")
+
+    conn = psycopg2.connect(config.get_connection_string())
+    cur = conn.cursor()
+    try:
+        # ANALYZE uniquement les tables mergées avec succès
+        for table in tables_merged:
+            try:
+                cur.execute(f"ANALYZE ods.{table};")
+                logger.info(f"[ANALYZE] ods.{table}")
+            except Exception as e:
+                logger.warning(f"[SKIP ANALYZE] {table}: {e}")
+        
+        conn.commit()
+        logger.info(f"[ANALYZE] {len(tables_merged)} tables analyzed")
+    finally:
+        cur.close()
+        conn.close()
     
     return {
         "tables_merged": len(tables_merged),

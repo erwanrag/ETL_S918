@@ -4,36 +4,24 @@
     incremental_strategy='merge',
     on_schema_change='sync_all_columns',
     post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'client') }} s WHERE s.cod_cli = t.cod_cli){% endif %}",
         "CREATE UNIQUE INDEX IF NOT EXISTS client_pkey ON {{ this }} USING btree (cod_cli)",
-        "ANALYZE {{ this }}",
-        "DELETE FROM {{ this }} WHERE cod_cli NOT IN (SELECT cod_cli FROM {{ source('ods', 'client') }})"
+        "CREATE INDEX IF NOT EXISTS idx_client_etl_source_timestamp ON {{ this }} USING btree (_etl_source_timestamp)",
+        "ANALYZE {{ this }}"
     ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : client
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:39:44
-    
-    Source       : ods.client
-    Lignes       : 15,409
-    Colonnes ODS : 316
-    Colonnes PREP: 122  (+ _prep_loaded_at)
-    Exclues      : 195 (61.7%)
-    
-    Stratégie    : INCREMENTAL
-    Unique Key  : cod_cli
-    Merge        : INSERT/UPDATE + DELETE orphans
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 2 répliqué(s) + ANALYZE
-    
-    Exclusions:
-      - Techniques ETL  : 1
-      - 100% NULL       : 50
-      - Constantes      : 140
-      - Faible valeur   : 4
-    ============================================================================
+============================================================================
+PREP MODEL : client
+============================================================================
+Generated : 2025-12-15 16:41:05
+Source    : ods.client
+Rows ODS  : 15,410
+Cols ODS  : 316
+Cols PREP : 122 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -160,10 +148,9 @@ SELECT
     "_etl_run_id" AS _etl_run_id,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'client') }}
-
 {% if is_incremental() %}
-    WHERE "_etl_valid_from" > (
-        SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp) 
-        FROM {{ this }}
-    )
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
 {% endif %}

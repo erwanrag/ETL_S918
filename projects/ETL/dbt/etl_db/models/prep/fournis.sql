@@ -4,36 +4,24 @@
     incremental_strategy='merge',
     on_schema_change='sync_all_columns',
     post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'fournis') }} s WHERE s.cod_fou = t.cod_fou){% endif %}",
         "CREATE UNIQUE INDEX IF NOT EXISTS fournis_pkey ON {{ this }} USING btree (cod_fou)",
-        "ANALYZE {{ this }}",
-        "DELETE FROM {{ this }} WHERE cod_fou NOT IN (SELECT cod_fou FROM {{ source('ods', 'fournis') }})"
+        "CREATE INDEX IF NOT EXISTS idx_fournis_etl_source_timestamp ON {{ this }} USING btree (_etl_source_timestamp)",
+        "ANALYZE {{ this }}"
     ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : fournis
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:40:07
-    
-    Source       : ods.fournis
-    Lignes       : 8,417
-    Colonnes ODS : 216
-    Colonnes PREP: 91  (+ _prep_loaded_at)
-    Exclues      : 126 (58.3%)
-    
-    Stratégie    : INCREMENTAL
-    Unique Key  : cod_fou
-    Merge        : INSERT/UPDATE + DELETE orphans
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 2 répliqué(s) + ANALYZE
-    
-    Exclusions:
-      - Techniques ETL  : 1
-      - 100% NULL       : 32
-      - Constantes      : 91
-      - Faible valeur   : 2
-    ============================================================================
+============================================================================
+PREP MODEL : fournis
+============================================================================
+Generated : 2025-12-15 16:41:17
+Source    : ods.fournis
+Rows ODS  : 8,419
+Cols ODS  : 216
+Cols PREP : 91 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -129,10 +117,9 @@ SELECT
     "_etl_run_id" AS _etl_run_id,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'fournis') }}
-
 {% if is_incremental() %}
-    WHERE "_etl_valid_from" > (
-        SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp) 
-        FROM {{ this }}
-    )
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
 {% endif %}

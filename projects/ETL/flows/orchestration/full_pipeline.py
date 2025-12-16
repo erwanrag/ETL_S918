@@ -4,10 +4,19 @@ Flow Prefect : Pipeline ETL Complet v6 (avec Services)
 ============================================================================
 Ajout du flow Services (Currency Data) dans le pipeline principal
 """
+
+# ============================================================
+# FORCE UTF-8 ENCODING (Windows compatibility)
+# ============================================================
+import sys
+import os
+
+
+
+# Maintenant les imports normaux
 from datetime import datetime
 from prefect import flow
 from prefect.logging import get_run_logger
-import sys
 from pathlib import Path
 from typing import Optional, List, Union
 
@@ -46,7 +55,7 @@ from ETL.flows.orchestration.parallel_helpers import (
 from Services.flows.currency_rates import load_currency_data_flow
 
 # ========================================
-# IMPORT ALERTING + CONFIG FORCÉ
+# IMPORT ALERTING + CONFIG FORCe
 # ========================================
 import importlib.util
 
@@ -209,26 +218,36 @@ def full_etl_pipeline(
         # ========================================
         logger.info("=" * 70)
         logger.info("[STAGING] Processing")
-        
+
         staging_start = datetime.now()
-        
-        if enable_parallel:
-            staging_result = raw_to_staging_flow_parallel(
-                table_names=tables_unique,
-                run_id=run_id
-            )
-        else:
-            from flows.ingestion.raw_to_staging import raw_to_staging_flow
-            staging_result = raw_to_staging_flow(
-                table_names=tables_unique,
-                run_id=run_id
-            )
-        
-        results['staging_tables'] = staging_result.get('tables_processed', 0)
-        results['staging_rows'] = staging_result.get('total_rows', 0)
-        
-        staging_duration = (datetime.now() - staging_start).total_seconds()
-        logger.info(f"[OK] {results['staging_tables']} tables, {staging_duration:.2f}s")
+
+        try:
+            if enable_parallel:
+                staging_result = raw_to_staging_flow_parallel(
+                    table_names=tables_unique,
+                    run_id=run_id
+                )
+            else:
+                from flows.ingestion.raw_to_staging import raw_to_staging_flow
+                staging_result = raw_to_staging_flow(
+                    table_names=tables_unique,
+                    run_id=run_id
+                )
+            
+            # Sécurisation contre None
+            if staging_result is None:
+                logger.error("[STAGING] Flow returned None (crashed)")
+                results['staging_tables'] = 0
+                results['staging_rows'] = 0
+            else:
+                results['staging_tables'] = staging_result.get('tables_processed', 0)
+                results['staging_rows'] = staging_result.get('total_rows', 0)
+                
+        except Exception as e:
+            logger.error(f"[STAGING] Fatal error: {e}")
+            results['staging_tables'] = 0
+            results['staging_rows'] = 0
+            # Continue le pipeline malgré l'erreur STAGING
         
 
         # ========================================
@@ -239,7 +258,7 @@ def full_etl_pipeline(
         
         ods_start = datetime.now()
         
-        # TOUJOURS utiliser le subflow (pour cohérence UI)
+        # TOUJOURS utiliser le subflow (pour coherence UI)
         from flows.ingestion.staging_to_ods import staging_to_ods_flow
         
         ods_result = staging_to_ods_flow(

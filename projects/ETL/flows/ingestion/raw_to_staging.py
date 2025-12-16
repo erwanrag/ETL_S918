@@ -1,17 +1,25 @@
 """
 ============================================================================
-Flow Prefect : RAW → STAGING (OPTIMISÉ)
+Flow Prefect : RAW → STAGING (OPTIMISe)
 ============================================================================
 """
 
+
+import sys
+import os
+
+
+
+# Imports normaux
 from prefect import flow, task
 from prefect.logging import get_run_logger
 from prefect.task_runners import ConcurrentTaskRunner
 from typing import Optional, List
-import sys
 import psycopg2
 
 sys.path.append(r"E:\Prefect\projects\ETL")
+
+
 
 from flows.config.pg_config import config
 from tasks.staging_tasks import create_staging_table, load_raw_to_staging
@@ -33,7 +41,7 @@ def list_raw_tables():
     return tables
 
 
-@task(name="[CHECK] Vérifier RAW")
+@task(name="[CHECK] Verifier RAW")
 def check_raw_table_has_data(table_name: str) -> bool:
     logger = get_run_logger()
     conn = psycopg2.connect(config.get_connection_string())
@@ -119,7 +127,7 @@ def raw_to_staging_single_table(table_name: str, run_id: str) -> dict:
         rows_affected = load_raw_to_staging(table_name, run_id, load_mode)
         
         if rows_affected == 0:
-            logger.warning(f"[WARN] Aucune donnée chargée")
+            logger.warning(f"[WARN] Aucune donnee chargee")
         else:
             logger.info(f"[OK] {rows_affected:,} lignes")
         
@@ -143,7 +151,7 @@ def raw_to_staging_flow_parallel(
     table_names: Optional[List[str]] = None,
     run_id: Optional[str] = None
 ):
-    """Version parallélisée par taille de table"""
+    """Version parallelisee par taille de table"""
     logger = get_run_logger()
 
     if run_id is None:
@@ -153,7 +161,7 @@ def raw_to_staging_flow_parallel(
     tables = table_names if table_names else list_raw_tables()
     logger.info(f"[TARGET] {len(tables)} tables")
     
-    # Récupérer tailles
+    # Recuperer tailles
     conn = psycopg2.connect(config.get_connection_string())
     cur = conn.cursor()
     
@@ -186,7 +194,7 @@ def raw_to_staging_flow_parallel(
     
     results = []
     
-    # SMALL : Parallèle illimité
+    # SMALL : Parallèle illimite
     if small:
         logger.info(f"[SMALL] {len(small)} tables en parallèle")
         small_results = raw_to_staging_single_table.map(
@@ -206,14 +214,14 @@ def raw_to_staging_flow_parallel(
             )
             results.extend(medium_results)
     
-    # LARGE : Séquentiel
+    # LARGE : Sequentiel
     if large:
-        logger.info(f"[LARGE] {len(large)} tables séquentiellement")
+        logger.info(f"[LARGE] {len(large)} tables sequentiellement")
         for table in large:
             result = raw_to_staging_single_table(table, run_id)
             results.append(result)
     
-    # Résoudre futures
+    # Resoudre futures
     resolved = []
     for r in results:
         if hasattr(r, 'result'):
@@ -228,13 +236,37 @@ def raw_to_staging_flow_parallel(
     total_rows = sum(r.get('rows', 0) for r in success)
     
     logger.info(f"✅ {len(success)}/{len(tables)} tables OK, {total_rows:,} lignes")
-    
+    # ============================================================
+    # ANALYZE STAGING (indispensable pour monitoring)
+    # ============================================================
+    logger.info("[ANALYZE] Toutes les tables staging_etl")
+
+    conn = psycopg2.connect(config.get_connection_string())
+    cur = conn.cursor()
+    try:
+        # Recuperer toutes les tables staging chargees avec succès
+        staging_tables = [r['table'] for r in success if r.get('table')]
+        
+        for table in staging_tables:
+            try:
+                cur.execute(f"ANALYZE staging_etl.stg_{table};")
+                logger.info(f"[ANALYZE] stg_{table}")
+            except Exception as e:
+                logger.warning(f"[SKIP ANALYZE] stg_{table}: {e}")
+        
+        conn.commit()
+        logger.info(f"[ANALYZE] {len(staging_tables)} tables analyzed")
+    finally:
+        cur.close()
+        conn.close()
+    # ============================================================
+    # RETURN (CRITIQUE - MANQUAIT !)
+    # ============================================================
     return {
         'tables_processed': len(success),
         'total_rows': total_rows,
         'results': resolved
     }
-
 
 @flow(name="[02] ⚙️ RAW → STAGING (Sequential)")
 def raw_to_staging_flow(
@@ -274,7 +306,7 @@ def raw_to_staging_flow(
             if rows and rows > 0:
                 logger.info(f"[OK] {table} : {rows:,} lignes ({load_mode})")
             else:
-                logger.warning(f"[WARN] {table} : Aucune donnée")
+                logger.warning(f"[WARN] {table} : Aucune donnee")
                 
         except Exception as e:
             logger.error(f"[ERROR] {table}: {e}")
@@ -294,5 +326,5 @@ def raw_to_staging_flow(
 
 
 if __name__ == "__main__":
-    # Utiliser version parallèle par défaut
+    # Utiliser version parallèle par defaut
     raw_to_staging_flow_parallel()

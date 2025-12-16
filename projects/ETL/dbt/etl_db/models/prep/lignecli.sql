@@ -1,31 +1,26 @@
 {{ config(
-    materialized='table',
+    materialized='incremental',
+    unique_key='uniq_id',
+    incremental_strategy='merge',
+    on_schema_change='sync_all_columns',
+    post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'lignecli') }} s WHERE s.uniq_id = t.uniq_id){% endif %}",
+        "CREATE UNIQUE INDEX IF NOT EXISTS lignecli_pkey ON {{ this }} USING btree (uniq_id)",
+        "ANALYZE {{ this }}"
+    ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : lignecli
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:41:14
-    
-    Source       : ods.lignecli
-    Lignes       : 47,419
-    Colonnes ODS : 419
-    Colonnes PREP: 176  (+ _prep_loaded_at)
-    Exclues      : 244 (58.2%)
-    
-    Stratégie    : TABLE
-    Full Refresh: Oui
-    Merge        : N/A
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 0 répliqué(s)
-    
-    Exclusions:
-      - Techniques ETL  : 5
-      - 100% NULL       : 75
-      - Constantes      : 159
-      - Faible valeur   : 5
-    ============================================================================
+============================================================================
+PREP MODEL : lignecli
+============================================================================
+Generated : 2025-12-15 16:41:43
+Source    : ods.lignecli
+Rows ODS  : 51,142
+Cols ODS  : 419
+Cols PREP : 177 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -50,6 +45,7 @@ SELECT
     "famille" AS famille,
     "s_famille" AS s_famille,
     "fam_cpt" AS fam_cpt,
+    "uni_vte" AS uni_vte,
     "lib_univ" AS lib_univ,
     "lib_conv" AS lib_conv,
     "conv_px" AS conv_px,
@@ -206,3 +202,9 @@ SELECT
     "_etl_valid_from" AS _etl_source_timestamp,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'lignecli') }}
+{% if is_incremental() %}
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
+{% endif %}

@@ -4,36 +4,24 @@
     incremental_strategy='merge',
     on_schema_change='sync_all_columns',
     post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'histoent') }} s WHERE s.uniq_id = t.uniq_id){% endif %}",
         "CREATE UNIQUE INDEX IF NOT EXISTS histoent_pkey ON {{ this }} USING btree (uniq_id)",
-        "ANALYZE {{ this }}",
-        "DELETE FROM {{ this }} WHERE uniq_id NOT IN (SELECT uniq_id FROM {{ source('ods', 'histoent') }})"
+        "CREATE INDEX IF NOT EXISTS idx_histoent_etl_source_timestamp ON {{ this }} USING btree (_etl_source_timestamp)",
+        "ANALYZE {{ this }}"
     ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : histoent
-    ============================================================================
-    Généré automatiquement le 2025-12-12 17:07:21
-    
-    Source       : ods.histoent
-    Lignes       : 1,093,243
-    Colonnes ODS : 450
-    Colonnes PREP: 232  (+ _prep_loaded_at)
-    Exclues      : 219 (48.7%)
-    
-    Stratégie    : INCREMENTAL
-    Unique Key  : uniq_id
-    Merge        : INSERT/UPDATE + DELETE orphans
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 2 répliqué(s) + ANALYZE
-    
-    Exclusions:
-      - Techniques ETL  : 1
-      - 100% NULL       : 55
-      - Constantes      : 161
-      - Faible valeur   : 2
-    ============================================================================
+============================================================================
+PREP MODEL : histoent
+============================================================================
+Generated : 2025-12-15 16:44:42
+Source    : ods.histoent
+Rows ODS  : 1,094,503
+Cols ODS  : 450
+Cols PREP : 221 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -55,7 +43,6 @@ SELECT
     "adr_fac_1" AS adr_fac_1,
     "adr_fac_2" AS adr_fac_2,
     "adr_fac_3" AS adr_fac_3,
-    "k_postf" AS k_postf,
     "villef" AS villef,
     "paysf" AS paysf,
     "chif_bl" AS chif_bl,
@@ -91,7 +78,6 @@ SELECT
     "commerc_2" AS commerc_2,
     "no_tarif" AS no_tarif,
     "mt_port" AS mt_port,
-    "port" AS port,
     "mod_liv" AS mod_liv,
     "colis" AS colis,
     "zon_geo" AS zon_geo,
@@ -117,7 +103,6 @@ SELECT
     "zta_4" AS zta_4,
     "zta_5" AS zta_5,
     "zda_1" AS zda_1,
-    "zda_2" AS zda_2,
     "zda_5" AS zda_5,
     "usr_crt" AS usr_crt,
     "dat_crt" AS dat_crt,
@@ -148,8 +133,6 @@ SELECT
     "bl_ori" AS bl_ori,
     "mt_fact" AS mt_fact,
     "dafaca_1" AS dafaca_1,
-    "dafaca_2" AS dafaca_2,
-    "dafaca_3" AS dafaca_3,
     "mtfaca_1" AS mtfaca_1,
     "mtfaca_2" AS mtfaca_2,
     "mtfaca_3" AS mtfaca_3,
@@ -182,7 +165,6 @@ SELECT
     "bp_ini" AS bp_ini,
     "inc_deb" AS inc_deb,
     "trs_deb" AS trs_deb,
-    "com_deb" AS com_deb,
     "adrfac4" AS adrfac4,
     "adrliv4" AS adrliv4,
     "cod_tlv" AS cod_tlv,
@@ -191,7 +173,6 @@ SELECT
     "ndos" AS ndos,
     "dat_rep" AS dat_rep,
     "cpt_bq" AS cpt_bq,
-    "hr_rec" AS hr_rec,
     "dat_rec" AS dat_rec,
     "hr_bl" AS hr_bl,
     "dat_bl" AS dat_bl,
@@ -223,8 +204,6 @@ SELECT
     "cde_ini" AS cde_ini,
     "pays_e" AS pays_e,
     "hr_liv" AS hr_liv,
-    "marge_p" AS marge_p,
-    "typ_veh" AS typ_veh,
     "typ_fac_edi" AS typ_fac_edi,
     "prix_franco" AS prix_franco,
     "cod_site" AS cod_site,
@@ -239,12 +218,10 @@ SELECT
     "dat_mad" AS dat_mad,
     "com_liv_1" AS com_liv_1,
     "com_liv_2" AS com_liv_2,
-    "com_liv_3" AS com_liv_3,
     "comment" AS comment,
     "metre_lin" AS metre_lin,
     "lias_bl" AS lias_bl,
     "cod_op" AS cod_op,
-    "prc_aco" AS prc_aco,
     "mt_aco_ori" AS mt_aco_ori,
     "lien_aco" AS lien_aco,
     "st_interne" AS st_interne,
@@ -270,10 +247,9 @@ SELECT
     "_etl_run_id" AS _etl_run_id,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'histoent') }}
-
 {% if is_incremental() %}
-    WHERE "_etl_valid_from" > (
-        SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp) 
-        FROM {{ this }}
-    )
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
 {% endif %}

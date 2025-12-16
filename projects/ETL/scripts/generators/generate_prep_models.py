@@ -7,6 +7,7 @@ Stratégie :
 - Détection colonnes ETL (_etl_*) présentes dans ODS
 - Réplication des index ODS → PREP
 - Génération conditionnelle MERGE incrémental
+- DELETE orphelins SEULEMENT en mode incremental
 ============================================================================
 """
 
@@ -55,21 +56,31 @@ class TableMetadata:
         cur = conn.cursor()
         
         try:
-            # 1. Récupérer PRIMARY KEY
+            # 1. Récupérer PRIMARY KEY OU UNIQUE INDEX depuis ODS
             cur.execute("""
-                SELECT a.attname
+                SELECT STRING_AGG(a.attname, ', ' ORDER BY array_position(i.indkey, a.attnum))
                 FROM pg_index i
                 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
                 WHERE i.indrelid = ('ods.' || %s)::regclass
-                  AND i.indisprimary
+                  AND (i.indisprimary OR i.indisunique)
+                GROUP BY i.indexrelid
+                ORDER BY i.indisprimary DESC
+                LIMIT 1
             """, (self.table_name,))
             
             pk_result = cur.fetchone()
-            if pk_result:
-                self.primary_key = pk_result[0]
-                print(f"  🔑 Primary Key detected: {self.primary_key}")
+            if pk_result and pk_result[0]:
+                pk_str = pk_result[0]
+                # Si c'est une clé composite, parser en liste
+                if ',' in pk_str:
+                    self.primary_key = [col.strip() for col in pk_str.split(',')]
+                    print(f"  🔑 Composite key detected: {self.primary_key}")
+                else:
+                    self.primary_key = pk_str
+                    print(f"  🔑 Primary key detected: {self.primary_key}")
             else:
-                print(f"  ⚠️  No Primary Key found")
+                print(f"  ⚠️  No unique key found → TABLE materialization")
+                self.primary_key = None
             
             # 2. Récupérer toutes les colonnes
             cur.execute("""
@@ -100,7 +111,7 @@ class IndexReplicator:
     
     def __init__(self, config: DatabaseConfig):
         self.config = config
-        
+
     def get_ods_indexes(self, table_name: str) -> List[str]:
         """Récupère les index ODS business (pas techniques ETL)"""
         conn = psycopg2.connect(self.config.get_connection_string())
@@ -113,7 +124,7 @@ class IndexReplicator:
                     indexdef
                 FROM pg_indexes
                 WHERE schemaname = 'ods' 
-                  AND tablename = %s
+                AND tablename = %s
                 ORDER BY indexname
             """, (table_name,))
             
@@ -122,13 +133,15 @@ class IndexReplicator:
             for idx_name, idx_def in cur.fetchall():
                 # Ignorer les index techniques ETL
                 if any(etl_col in idx_def.lower() for etl_col in 
-                       ['_etl_hashdiff', '_etl_valid_from', '_etl_valid_to', 
-                        'idx_ods_', 'upsert']):
+                    ['_etl_valid_to', 'idx_ods_', 'upsert']):
                     print(f"  ⏭️  Skipping ETL index: {idx_name}")
                     continue
                 
                 # Adapter l'index pour PREP
                 adapted_idx = idx_def.replace(f'ON ods.{table_name}', 'ON {{ this }}')
+                
+                # Remplacer _etl_valid_from par _etl_source_timestamp
+                adapted_idx = adapted_idx.replace('_etl_valid_from', '_etl_source_timestamp')
                 
                 # Ajouter IF NOT EXISTS
                 if 'IF NOT EXISTS' not in adapted_idx:
@@ -167,7 +180,7 @@ class ColumnAnalyzer:
                 SELECT column_name, data_type
                 FROM information_schema.columns
                 WHERE table_schema = 'ods'
-                  AND table_name = %s
+                AND table_name = %s
                 ORDER BY ordinal_position
             """, (self.table_name,))
             
@@ -180,18 +193,30 @@ class ColumnAnalyzer:
             analysis = {
                 'total_rows': total_rows,
                 'total_columns': len(columns),
-                'columns': {}
+                'columns': {},
+                'excluded_etl': 0,
+                'excluded_null': 0,
+                'excluded_constant': 0,
+                'excluded_low_value': 0,
+                'kept_columns': 0
             }
             
             print(f"\n📊 Analyzing {len(columns)} columns in ods.{self.table_name} ({total_rows:,} rows)...")
             
+            # Optimisation : Limiter l'échantillon pour grandes tables
+            sample_clause = ""
+            if total_rows > 100000:
+                sample_size = min(100000, total_rows)
+                sample_clause = f"TABLESAMPLE SYSTEM ((100000.0 / {total_rows}) * 100)"
+                print(f"  ⚡ Using sampling ({sample_size:,} rows) for performance")
+            
             for col_name, data_type in columns:
-                # Analyse basique : NULL%, cardinalité
+                # Analyse basique : NULL%, cardinalité (avec échantillonnage)
                 cur.execute(f"""
                     SELECT 
                         COUNT(*) FILTER (WHERE "{col_name}" IS NULL) * 100.0 / NULLIF(COUNT(*), 0) as null_pct,
                         COUNT(DISTINCT "{col_name}") as cardinality
-                    FROM ods.{self.table_name}
+                    FROM ods.{self.table_name} {sample_clause}
                 """)
                 
                 null_pct, cardinality = cur.fetchone()
@@ -216,10 +241,9 @@ class ColumnFilter:
         self.table_name = table_name
         self.metadata = metadata
         
-        # Colonnes ETL à TOUJOURS exclure (techniques SCD2)
+        # Colonnes ETL à TOUJOURS exclure (techniques SCD2 uniquement)
         self.always_exclude = {
-            '_etl_hashdiff',
-            '_etl_valid_to'
+            '_etl_valid_to'  # Seulement valid_to, pas hashdiff
         }
         
         # Préfixes de colonnes métier importantes
@@ -234,19 +258,21 @@ class ColumnFilter:
         """Détermine si une colonne doit être gardée"""
         col_lower = col_name.lower()
         
-        # 1. Toujours exclure les colonnes techniques SCD2
+        # 1. TOUJOURS garder la PRIMARY KEY
+        if isinstance(self.metadata.primary_key, list):
+            if col_name in self.metadata.primary_key:
+                return (True, "primary_key")
+        elif col_name == self.metadata.primary_key:
+            return (True, "primary_key")
+        
+        # 2. Exclure colonnes techniques SCD2
         if col_name in self.always_exclude:
             return (False, "excluded_etl_scd2")
         
-        # 2. TOUJOURS garder la PRIMARY KEY
-        if col_name == self.metadata.primary_key:
-            return (True, "primary_key")
-        
-        # 3. Garder les colonnes ETL utiles (_etl_run_id, _etl_loaded_at)
+        # 3. Garder les colonnes ETL utiles
         if col_name in self.metadata.etl_columns:
             if col_name in ['_etl_run_id', '_etl_loaded_at', '_etl_valid_from']:
                 return (True, "etl_useful")
-            # Autres colonnes ETL : décider selon utilité
             return (False, "etl_not_needed")
         
         # 4. Garder si correspond à un préfixe important
@@ -272,160 +298,160 @@ class ColumnFilter:
     def filter_columns(self, analysis: Dict) -> Tuple[List[str], Dict]:
         """Filtre les colonnes selon les règles"""
         useful_columns = []
-        report = {
-            'excluded_etl': 0,
-            'excluded_null': 0,
-            'excluded_constant': 0,
-            'excluded_low_value': 0,
-            'kept_columns': 0
-        }
         
         for col_name, col_info in analysis['columns'].items():
             keep, reason = self.should_keep_column(col_name, col_info)
             
             if keep:
                 useful_columns.append(col_name)
-                report['kept_columns'] += 1
+                analysis['kept_columns'] += 1
             else:
                 if 'etl' in reason:
-                    report['excluded_etl'] += 1
+                    analysis['excluded_etl'] += 1
                 elif reason == '100%_null':
-                    report['excluded_null'] += 1
+                    analysis['excluded_null'] += 1
                 elif reason == 'constant':
-                    report['excluded_constant'] += 1
+                    analysis['excluded_constant'] += 1
                 elif reason == 'low_value':
-                    report['excluded_low_value'] += 1
+                    analysis['excluded_low_value'] += 1
         
-        report['total_columns'] = analysis['total_columns']
-        report['total_rows'] = analysis['total_rows']
-        
-        return useful_columns, report
+        return useful_columns, analysis
 
-
-def generate_prep_model(table_name: str, columns: List[str], 
-                        analysis: Dict, indexes: List[str],
-                        metadata: TableMetadata) -> str:
+def generate_prep_model(
+    table_name: str,
+    columns: List[str],
+    analysis: Dict,
+    indexes: List[str],
+    metadata: TableMetadata
+) -> str:
     """Génère le contenu SQL du modèle PREP avec MERGE incrémental"""
-    
-    # Déterminer la stratégie
+
+    # ------------------------------------------------------------------
+    # Stratégie d'incrémental
+    # ------------------------------------------------------------------
     unique_key = metadata.primary_key
     has_etl_valid_from = '_etl_valid_from' in columns
-    has_etl_run_id = '_etl_run_id' in columns
-    
+
     if not unique_key:
-        print(f"  ⚠️  No PRIMARY KEY, using TABLE (full refresh)")
         materialization = 'table'
         incremental_strategy = None
-    else:
-        print(f"  ✅ MERGE enabled with unique_key: {unique_key}")
+        unique_key_str = None
+        unique_key_lower = None
+        print(f"  ⚠️  No PRIMARY KEY → TABLE materialization")
+    elif isinstance(unique_key, list):
         materialization = 'incremental'
         incremental_strategy = 'merge'
-    
-    # Config dbt
-    if incremental_strategy:
-        config_lines = [
-            f"    materialized='{materialization}',",
-            f"    unique_key='{unique_key.lower()}',",
-            f"    incremental_strategy='{incremental_strategy}',",
-            "    on_schema_change='sync_all_columns',"
-        ]
+        unique_key_lower = [k.lower() for k in unique_key]
+        unique_key_str = str(unique_key_lower)
+        print(f"  ✅ MERGE enabled with composite key: {unique_key}")
     else:
-        config_lines = [
-            f"    materialized='{materialization}',"
-        ]
-    
-    # Post-hooks pour index + cleanup des lignes supprimées
+        materialization = 'incremental'
+        incremental_strategy = 'merge'
+        unique_key_lower = unique_key.lower()
+        unique_key_str = f"'{unique_key_lower}'"
+        print(f"  ✅ MERGE enabled with unique_key: {unique_key}")
+
+    # ------------------------------------------------------------------
+    # Config dbt
+    # ------------------------------------------------------------------
+    config_lines = [f"    materialized='{materialization}',"]
+
+    if incremental_strategy:
+        config_lines.extend([
+            f"    unique_key={unique_key_str},",
+            "    incremental_strategy='merge',",
+            "    on_schema_change='sync_all_columns',"
+        ])
+
+    # ------------------------------------------------------------------
+    # Post-hooks (ORDRE IMPORTANT)
+    #   1. DELETE orphelins
+    #   2. CREATE INDEX
+    #   3. ANALYZE
+    # ------------------------------------------------------------------
     post_hooks = []
-    
-    # Ajouter les index (déjà entre guillemets)
+
+    # 1️⃣ DELETE orphelins (NULL-safe, scalable)
+    if incremental_strategy and unique_key:
+        if isinstance(unique_key_lower, list):
+            join_conditions = " AND ".join(
+                [f"s.{k} = t.{k}" for k in unique_key_lower]
+            )
+        else:
+            join_conditions = f"s.{unique_key_lower} = t.{unique_key_lower}"
+
+        cleanup_sql = (
+            "{% if is_incremental() %}"
+            f"DELETE FROM {{{{ this }}}} t "
+            f"WHERE NOT EXISTS ("
+            f"SELECT 1 FROM {{{{ source('ods', '{table_name}') }}}} s "
+            f"WHERE {join_conditions}"
+            f")"
+            "{% endif %}"
+        )
+
+        post_hooks.append(f'"{cleanup_sql}"')
+        print("  ✅ DELETE orphaned rows enabled (incremental only)")
+
+    # 2️⃣ Index
     if indexes:
         post_hooks.extend([f'"{idx}"' for idx in indexes])
-    
-    # Ajouter le cleanup des lignes supprimées (si incremental)
-    # Utiliser {{ this }} et {{ source() }} sans guillemets supplémentaires
-    if incremental_strategy and unique_key:
-        # Générer le SQL brut sans guillemets pour éviter les problèmes d'échappement
-        cleanup_sql = f"DELETE FROM {{{{ this }}}} WHERE {unique_key.lower()} NOT IN (SELECT {unique_key.lower()} FROM {{{{ source('ods', '{table_name}') }}}})"
-        # Utiliser repr() pour échapper correctement
-        post_hooks.append(f'"{cleanup_sql}"') 
-        print(f"  ✅ DELETE orphaned rows enabled")
-    
-    if post_hooks:
-        post_hooks_str = ',\n        '.join(post_hooks)
-        config_lines.append(f"""    post_hook=[
-        {post_hooks_str}
-    ]""")
-    
-    config_block = "{{ config(\n" + "\n".join(config_lines) + "\n) }}"
-    
-    # Générer les colonnes
-    cols_list = []
 
+    if post_hooks:
+        config_lines.append(
+            "    post_hook=[\n        " + ",\n        ".join(post_hooks) + "\n    ]"
+        )
+
+    config_block = "{{ config(\n" + "\n".join(config_lines) + "\n) }}"
+
+    # ------------------------------------------------------------------
+    # SELECT
+    # ------------------------------------------------------------------
+    cols_sql = []
     for col in columns:
         alias = col.lower().replace('-', '_')
         if col == '_etl_valid_from':
-            cols_list.append(f'    "{col}" AS _etl_source_timestamp')
+            cols_sql.append(f'    "{col}" AS _etl_source_timestamp')
         else:
-            cols_list.append(f'    "{col}" AS {alias}')
+            cols_sql.append(f'    "{col}" AS {alias}')
 
-    # Ajouter colonne de chargement PREP
-    cols_list.append(f'    CURRENT_TIMESTAMP AS _prep_loaded_at')
-    
-    # Créer le bloc SELECT
-    select_block = ",\n".join(cols_list)
+    cols_sql.append("    CURRENT_TIMESTAMP AS _prep_loaded_at")
+    select_block = ",\n".join(cols_sql)
 
-    # Bloc WHERE/AND pour incrémental
-    incremental_block = ""
-    
+    incremental_where = ""
     if incremental_strategy == 'merge' and has_etl_valid_from:
-        # Incrémental basé sur _etl_valid_from
-        incremental_block = """
-
+        incremental_where = """
 {% if is_incremental() %}
-    WHERE "_etl_valid_from" > (
-        SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp) 
-        FROM {{ this }}
-    )
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
 {% endif %}"""
-        print(f"  ✅ Incremental loading enabled (_etl_valid_from)")
-    elif incremental_strategy == 'merge':
-        print(f"  ⚠️  MERGE without _etl_valid_from: will reload all rows each run")
-    
-    excluded_count = analysis['total_columns'] - analysis['kept_columns']
-    
+
+    # ------------------------------------------------------------------
+    # SQL FINAL
+    # ------------------------------------------------------------------
     sql = f"""{config_block}
 
 /*
-    ============================================================================
-    Modèle PREP : {table_name}
-    ============================================================================
-    Généré automatiquement le {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-    
-    Source       : ods.{table_name}
-    Lignes       : {analysis['total_rows']:,}
-    Colonnes ODS : {analysis['total_columns']}
-    Colonnes PREP: {analysis['kept_columns'] + 1}  (+ _prep_loaded_at)
-    Exclues      : {excluded_count} ({100*excluded_count/analysis['total_columns']:.1f}%)
-    
-    Stratégie    : {materialization.upper()}
-    {'Unique Key  : ' + unique_key if unique_key else 'Full Refresh: Oui'}
-    Merge        : {'INSERT/UPDATE + DELETE orphans' if incremental_strategy == 'merge' else 'N/A'}
-    Incremental  : {'Enabled (_etl_valid_from)' if has_etl_valid_from else 'Disabled (full reload)'}
-    Index        : {len(indexes) if indexes else 0} répliqué(s){' + ANALYZE' if indexes else ''}
-    
-    Exclusions:
-      - Techniques ETL  : {analysis['excluded_etl']}
-      - 100% NULL       : {analysis['excluded_null']}
-      - Constantes      : {analysis['excluded_constant']}
-      - Faible valeur   : {analysis['excluded_low_value']}
-    ============================================================================
+============================================================================
+PREP MODEL : {table_name}
+============================================================================
+Generated : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Source    : ods.{table_name}
+Rows ODS  : {analysis['total_rows']:,}
+Cols ODS  : {analysis['total_columns']}
+Cols PREP : {analysis['kept_columns'] + 1} (+ _prep_loaded_at)
+Strategy  : {materialization.upper()}
+============================================================================
 */
 
 SELECT
 {select_block}
-FROM {{{{ source('ods', '{table_name}') }}}}{incremental_block}
+FROM {{{{ source('ods', '{table_name}') }}}}{incremental_where}
 """
     return sql
+
 
 
 def process_single_table(table_name: str, config: DatabaseConfig, output_dir: Path, 
@@ -444,12 +470,12 @@ def process_single_table(table_name: str, config: DatabaseConfig, output_dir: Pa
     
     # 3. Filtrer les colonnes
     filter_obj = ColumnFilter(table_name, metadata)
-    useful_cols, report = filter_obj.filter_columns(analysis)
+    useful_cols, analysis = filter_obj.filter_columns(analysis)
     
     print(f"\n📊 Column Analysis:")
-    print(f"  Total columns : {report['total_columns']}")
-    print(f"  Kept columns  : {report['kept_columns']}")
-    print(f"  Excluded      : {report['total_columns'] - report['kept_columns']} ({100*(report['total_columns'] - report['kept_columns'])/report['total_columns']:.1f}%)")
+    print(f"  Total columns : {analysis['total_columns']}")
+    print(f"  Kept columns  : {analysis['kept_columns']}")
+    print(f"  Excluded      : {analysis['total_columns'] - analysis['kept_columns']} ({100*(analysis['total_columns'] - analysis['kept_columns'])/analysis['total_columns']:.1f}%)")
     
     # 4. Récupérer les index ODS
     print(f"\n🔍 Replicating indexes from ODS...")
@@ -464,7 +490,7 @@ def process_single_table(table_name: str, config: DatabaseConfig, output_dir: Pa
     # 5. Générer le modèle SQL
     if not dry_run:
         model_file = output_dir / f"{table_name}.sql"
-        content = generate_prep_model(table_name, useful_cols, report, indexes, metadata)
+        content = generate_prep_model(table_name, useful_cols, analysis, indexes, metadata)
         
         with open(model_file, 'w', encoding='utf-8') as f:
             f.write(content)
@@ -473,7 +499,7 @@ def process_single_table(table_name: str, config: DatabaseConfig, output_dir: Pa
     else:
         print(f"\n🔍 DRY RUN: Would generate {table_name}.sql")
     
-    return (table_name, report)
+    return (table_name, analysis)
 
 
 def main():

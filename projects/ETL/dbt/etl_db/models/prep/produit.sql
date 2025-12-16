@@ -4,36 +4,24 @@
     incremental_strategy='merge',
     on_schema_change='sync_all_columns',
     post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'produit') }} s WHERE s.cod_pro = t.cod_pro){% endif %}",
+        "CREATE INDEX IF NOT EXISTS idx_produit_etl_source_timestamp ON {{ this }} USING btree (_etl_source_timestamp)",
         "CREATE UNIQUE INDEX IF NOT EXISTS produit_pkey ON {{ this }} USING btree (cod_pro)",
-        "ANALYZE {{ this }}",
-        "DELETE FROM {{ this }} WHERE cod_pro NOT IN (SELECT cod_pro FROM {{ source('ods', 'produit') }})"
+        "ANALYZE {{ this }}"
     ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : produit
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:57:31
-    
-    Source       : ods.produit
-    Lignes       : 436,163
-    Colonnes ODS : 613
-    Colonnes PREP: 156  (+ _prep_loaded_at)
-    Exclues      : 458 (74.7%)
-    
-    Stratégie    : INCREMENTAL
-    Unique Key  : cod_pro
-    Merge        : INSERT/UPDATE + DELETE orphans
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 2 répliqué(s) + ANALYZE
-    
-    Exclusions:
-      - Techniques ETL  : 1
-      - 100% NULL       : 178
-      - Constantes      : 272
-      - Faible valeur   : 7
-    ============================================================================
+============================================================================
+PREP MODEL : produit
+============================================================================
+Generated : 2025-12-15 16:43:46
+Source    : ods.produit
+Rows ODS  : 436,225
+Cols ODS  : 613
+Cols PREP : 138 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -49,7 +37,6 @@ SELECT
     "dat_mod" AS dat_mod,
     "zal_5" AS zal_5,
     "znu_1" AS znu_1,
-    "znu_2" AS znu_2,
     "znu_3" AS znu_3,
     "znu_5" AS znu_5,
     "zta_1" AS zta_1,
@@ -69,7 +56,6 @@ SELECT
     "ordre" AS ordre,
     "reg_fact" AS reg_fact,
     "val_df" AS val_df,
-    "crit_df" AS crit_df,
     "px_refv" AS px_refv,
     "coef_t2" AS coef_t2,
     "coef_t3" AS coef_t3,
@@ -83,18 +69,15 @@ SELECT
     "px_refa" AS px_refa,
     "fam_tar" AS fam_tar,
     "marque" AS marque,
-    "nb_point" AS nb_point,
     "art_remp" AS art_remp,
     "dat_remp" AS dat_remp,
     "equiv" AS equiv,
     "classe" AS classe,
     "coef_dep" AS coef_dep,
     "code_tva" AS code_tva,
-    "enc_db" AS enc_db,
     "rem_vte" AS rem_vte,
     "pmp" AS pmp,
     "ctrl_qua" AS ctrl_qua,
-    "suiv_se" AS suiv_se,
     "cod_for" AS cod_for,
     "qte_for" AS qte_for,
     "cod_nom" AS cod_nom,
@@ -123,17 +106,12 @@ SELECT
     "rem_imp" AS rem_imp,
     "zlo_1" AS zlo_1,
     "zlo_2" AS zlo_2,
-    "radio_dng" AS radio_dng,
     "cod_cli" AS cod_cli,
     "int_condt" AS int_condt,
     "gar_fab" AS gar_fab,
     "qte_eco" AS qte_eco,
     "magasin" AS magasin,
-    "er_for" AS er_for,
     "er_pon" AS er_pon,
-    "er_var_1" AS er_var_1,
-    "er_var_2" AS er_var_2,
-    "mult_cde" AS mult_cde,
     "s3_famille" AS s3_famille,
     "s4_famille" AS s4_famille,
     "qte_serm" AS qte_serm,
@@ -143,7 +121,6 @@ SELECT
     "qte_max" AS qte_max,
     "nat_deb" AS nat_deb,
     "survei" AS survei,
-    "dep_uniq" AS dep_uniq,
     "cod_conv" AS cod_conv,
     "cod_cal_1" AS cod_cal_1,
     "cod_cal_2" AS cod_cal_2,
@@ -158,7 +135,6 @@ SELECT
     "ges_emp" AS ges_emp,
     "mini_vte" AS mini_vte,
     "mult_vte" AS mult_vte,
-    "crit_cli_df" AS crit_cli_df,
     "cod_nue" AS cod_nue,
     "nb_uv" AS nb_uv,
     "nb_cv" AS nb_cv,
@@ -168,25 +144,19 @@ SELECT
     "ges_smp" AS ges_smp,
     "px_std" AS px_std,
     "w_produit" AS w_produit,
-    "f_pn" AS f_pn,
     "phone" AS phone,
-    "fou_fab" AS fou_fab,
     "px_std2" AS px_std2,
     "px_std3" AS px_std3,
     "cod_cat" AS cod_cat,
     "px_ttc" AS px_ttc,
     "dat_import" AS dat_import,
     "non_sscc" AS non_sscc,
-    "code_bio" AS code_bio,
     "nb_uv1" AS nb_uv1,
-    "poid_ul_1" AS poid_ul_1,
     "px_etud" AS px_etud,
     "non_uli" AS non_uli,
-    "tare_p_1" AS tare_p_1,
     "tare_p_2" AS tare_p_2,
     "pds_net_1" AS pds_net_1,
     "pds_net_2" AS pds_net_2,
-    "pds_net_3" AS pds_net_3,
     "pds_net_ul_1" AS pds_net_ul_1,
     "cod_prev" AS cod_prev,
     "dat_fpxr" AS dat_fpxr,
@@ -194,10 +164,9 @@ SELECT
     "_etl_run_id" AS _etl_run_id,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'produit') }}
-
 {% if is_incremental() %}
-    WHERE "_etl_valid_from" > (
-        SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp) 
-        FROM {{ this }}
-    )
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
 {% endif %}

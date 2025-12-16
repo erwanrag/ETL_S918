@@ -3,29 +3,16 @@
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : tabgco
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:58:08
-    
-    Source       : ods.tabgco
-    Lignes       : 6,116
-    Colonnes ODS : 291
-    Colonnes PREP: 48  (+ _prep_loaded_at)
-    Exclues      : 244 (83.8%)
-    
-    Stratégie    : TABLE
-    Full Refresh: Oui
-    Merge        : N/A
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 0 répliqué(s)
-    
-    Exclusions:
-      - Techniques ETL  : 5
-      - 100% NULL       : 175
-      - Constantes      : 59
-      - Faible valeur   : 5
-    ============================================================================
+============================================================================
+PREP MODEL : tabgco
+============================================================================
+Generated : 2025-12-15 16:44:02
+Source    : ods.tabgco
+Rows ODS  : 6,117
+Cols ODS  : 291
+Cols PREP : 77 (+ _prep_loaded_at)
+Strategy  : TABLE
+============================================================================
 */
 
 SELECT
@@ -37,11 +24,30 @@ SELECT
     "fa_prcm" AS fa_prcm,
     "fp_cptv" AS fp_cptv,
     "fp_cpta" AS fp_cpta,
+    "zal_1" AS zal_1,
+    "zal_2" AS zal_2,
+    "znu_1" AS znu_1,
+    "znu_2" AS znu_2,
+    "zta_1" AS zta_1,
+    "zta_2" AS zta_2,
     "civilite" AS civilite,
+    "adresse_1" AS adresse_1,
+    "adresse_2" AS adresse_2,
+    "adresse_3" AS adresse_3,
     "ville" AS ville,
     "pays" AS pays,
     "cli_cai" AS cli_cai,
     "dern_z" AS dern_z,
+    "typ_int_1" AS typ_int_1,
+    "typ_int_2" AS typ_int_2,
+    "typ_int_3" AS typ_int_3,
+    "typ_int_4" AS typ_int_4,
+    "typ_int_5" AS typ_int_5,
+    "typ_int_6" AS typ_int_6,
+    "typ_int_7" AS typ_int_7,
+    "typ_int_8" AS typ_int_8,
+    "typ_int_9" AS typ_int_9,
+    "typ_int_10" AS typ_int_10,
     "productif" AS productif,
     "nb_int" AS nb_int,
     "cod_equ" AS cod_equ,
@@ -54,6 +60,16 @@ SELECT
     "mel" AS mel,
     "no_port" AS no_port,
     "min_t" AS min_t,
+    "jour_t_1" AS jour_t_1,
+    "jour_t_2" AS jour_t_2,
+    "jour_t_3" AS jour_t_3,
+    "jour_t_4" AS jour_t_4,
+    "jour_t_5" AS jour_t_5,
+    "jour_t_6" AS jour_t_6,
+    "heure_t_1" AS heure_t_1,
+    "heure_t_2" AS heure_t_2,
+    "heure_t_3" AS heure_t_3,
+    "heure_t_4" AS heure_t_4,
     "adresse4" AS adresse4,
     "fct_com" AS fct_com,
     "fct_tlv" AS fct_tlv,

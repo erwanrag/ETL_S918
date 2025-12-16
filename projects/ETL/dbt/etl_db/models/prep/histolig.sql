@@ -4,36 +4,24 @@
     incremental_strategy='merge',
     on_schema_change='sync_all_columns',
     post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'histolig') }} s WHERE s.uniq_id = t.uniq_id){% endif %}",
         "CREATE UNIQUE INDEX IF NOT EXISTS histolig_pkey ON {{ this }} USING btree (uniq_id)",
-        "ANALYZE {{ this }}",
-        "DELETE FROM {{ this }} WHERE uniq_id NOT IN (SELECT uniq_id FROM {{ source('ods', 'histolig') }})"
+        "CREATE INDEX IF NOT EXISTS idx_histolig_etl_source_timestamp ON {{ this }} USING btree (_etl_source_timestamp)",
+        "ANALYZE {{ this }}"
     ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : histolig
-    ============================================================================
-    Généré automatiquement le 2025-12-12 17:16:02
-    
-    Source       : ods.histolig
-    Lignes       : 1,886,809
-    Colonnes ODS : 442
-    Colonnes PREP: 229  (+ _prep_loaded_at)
-    Exclues      : 214 (48.4%)
-    
-    Stratégie    : INCREMENTAL
-    Unique Key  : uniq_id
-    Merge        : INSERT/UPDATE + DELETE orphans
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 2 répliqué(s) + ANALYZE
-    
-    Exclusions:
-      - Techniques ETL  : 1
-      - 100% NULL       : 70
-      - Constantes      : 137
-      - Faible valeur   : 6
-    ============================================================================
+============================================================================
+PREP MODEL : histolig
+============================================================================
+Generated : 2025-12-15 16:44:30
+Source    : ods.histolig
+Rows ODS  : 1,891,197
+Cols ODS  : 442
+Cols PREP : 217 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -89,7 +77,6 @@ SELECT
     "pmp" AS pmp,
     "zal_1" AS zal_1,
     "zal_3" AS zal_3,
-    "zal_5" AS zal_5,
     "znu_3" AS znu_3,
     "znu_5" AS znu_5,
     "zta_1" AS zta_1,
@@ -113,7 +100,6 @@ SELECT
     "maj_stk" AS maj_stk,
     "edt_nmc" AS edt_nmc,
     "conv_md" AS conv_md,
-    "conv_dec" AS conv_dec,
     "qte_cde" AS qte_cde,
     "n_surlig" AS n_surlig,
     "heure" AS heure,
@@ -125,10 +111,8 @@ SELECT
     "cal_marg" AS cal_marg,
     "px_rvt" AS px_rvt,
     "coef_dep" AS coef_dep,
-    "remise3" AS remise3,
     "poid_tot" AS poid_tot,
     "maj_stat" AS maj_stat,
-    "ref_con" AS ref_con,
     "sf_tar" AS sf_tar,
     "qui" AS qui,
     "mt_ht" AS mt_ht,
@@ -144,14 +128,12 @@ SELECT
     "zlo_2" AS zlo_2,
     "zlo_3" AS zlo_3,
     "zlo_5" AS zlo_5,
-    "typ_rem_1" AS typ_rem_1,
     "typ_rem_3" AS typ_rem_3,
     "qte_rlf" AS qte_rlf,
     "mt_rlf" AS mt_rlf,
     "volume" AS volume,
     "zon_lib_1" AS zon_lib_1,
     "num_ave" AS num_ave,
-    "tx_com" AS tx_com,
     "no_of" AS no_of,
     "no_reafab" AS no_reafab,
     "no_reacons" AS no_reacons,
@@ -163,7 +145,6 @@ SELECT
     "no_serie" AS no_serie,
     "lien_emp" AS lien_emp,
     "reg_deb" AS reg_deb,
-    "nat_deb" AS nat_deb,
     "no_contrat" AS no_contrat,
     "type_prix" AS type_prix,
     "hr_vp" AS hr_vp,
@@ -179,11 +160,9 @@ SELECT
     "crit_cli_df" AS crit_cli_df,
     "typ_gra" AS typ_gra,
     "nb_ua" AS nb_ua,
-    "nb_ca" AS nb_ca,
     "nb_uv" AS nb_uv,
     "pp_ua" AS pp_ua,
     "pp_uv" AS pp_uv,
-    "regr" AS regr,
     "dat_acc" AS dat_acc,
     "dat_rll" AS dat_rll,
     "lien_frais" AS lien_frais,
@@ -201,8 +180,6 @@ SELECT
     "nom_pr2" AS nom_pr2,
     "no_lot" AS no_lot,
     "mt_ttc" AS mt_ttc,
-    "rem_val_1" AS rem_val_1,
-    "rem_val_4" AS rem_val_4,
     "ope_exc" AS ope_exc,
     "px_rvt_bo" AS px_rvt_bo,
     "no_unique" AS no_unique,
@@ -260,17 +237,15 @@ SELECT
     "tare_p_2" AS tare_p_2,
     "no_deb" AS no_deb,
     "lig_deb" AS lig_deb,
-    "cond_rem_2" AS cond_rem_2,
     "cod_nom" AS cod_nom,
     "mt_titresto" AS mt_titresto,
     "_etl_valid_from" AS _etl_source_timestamp,
     "_etl_run_id" AS _etl_run_id,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'histolig') }}
-
 {% if is_incremental() %}
-    WHERE "_etl_valid_from" > (
-        SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp) 
-        FROM {{ this }}
-    )
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
 {% endif %}

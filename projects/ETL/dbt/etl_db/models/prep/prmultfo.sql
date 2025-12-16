@@ -1,31 +1,26 @@
 {{ config(
-    materialized='table',
+    materialized='incremental',
+    unique_key=['cod_pro', 'cod_fou'],
+    incremental_strategy='merge',
+    on_schema_change='sync_all_columns',
+    post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'prmultfo') }} s WHERE s.cod_pro = t.cod_pro AND s.cod_fou = t.cod_fou){% endif %}",
+        "CREATE UNIQUE INDEX IF NOT EXISTS prmultfo_pkey ON {{ this }} USING btree (cod_pro, cod_fou)",
+        "ANALYZE {{ this }}"
+    ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : prmultfo
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:41:53
-    
-    Source       : ods.prmultfo
-    Lignes       : 2,812
-    Colonnes ODS : 172
-    Colonnes PREP: 47  (+ _prep_loaded_at)
-    Exclues      : 126 (73.3%)
-    
-    Stratégie    : TABLE
-    Full Refresh: Oui
-    Merge        : N/A
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 0 répliqué(s)
-    
-    Exclusions:
-      - Techniques ETL  : 5
-      - 100% NULL       : 50
-      - Constantes      : 69
-      - Faible valeur   : 2
-    ============================================================================
+============================================================================
+PREP MODEL : prmultfo
+============================================================================
+Generated : 2025-12-15 16:42:01
+Source    : ods.prmultfo
+Rows ODS  : 3,392
+Cols ODS  : 172
+Cols PREP : 47 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -77,3 +72,9 @@ SELECT
     "_etl_valid_from" AS _etl_source_timestamp,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'prmultfo') }}
+{% if is_incremental() %}
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
+{% endif %}

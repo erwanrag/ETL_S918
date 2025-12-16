@@ -11,6 +11,10 @@ Lit dynamiquement les clés primaires depuis metadata.etl_tables
 import psycopg2
 from typing import Optional, List, Dict
 import sys
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 sys.path.append(r'E:\Prefect\projects\ETL')
 from flows.config.pg_config import config
@@ -81,7 +85,7 @@ def load_table_metadata() -> Dict[str, dict]:
                 _TABLE_METADATA_CACHE[config_name.lower()] = metadata
         
         _CACHE_LOADED = True
-        print(f"[OK] Métadonnées chargées : {len(rows)} configs")
+        logger.info(f"Metadata loaded: {len(rows)} configs")
         
     finally:
         cur.close()
@@ -202,8 +206,12 @@ def reload_metadata():
     load_table_metadata()
 
 
+# ============================================================
 # Chargement initial au démarrage
+# ============================================================
 try:
     load_table_metadata()
 except Exception as e:
-    print(f"[WARN] Impossible de charger les métadonnées : {e}")
+    # Use logging instead of print to avoid closed file errors
+    logger.warning(f"Could not load metadata at module import: {e}")
+    # Continue anyway - metadata will be loaded on first use

@@ -1,34 +1,30 @@
 {{ config(
-    materialized='table',
+    materialized='incremental',
+    unique_key=['ndos', 'typ_fich', 'typ_elem'],
+    incremental_strategy='merge',
+    on_schema_change='sync_all_columns',
+    post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'typelem') }} s WHERE s.ndos = t.ndos AND s.typ_fich = t.typ_fich AND s.typ_elem = t.typ_elem){% endif %}",
+        "CREATE UNIQUE INDEX IF NOT EXISTS typelem_pkey ON {{ this }} USING btree (ndos, typ_fich, typ_elem)",
+        "ANALYZE {{ this }}"
+    ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : typelem
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:58:09
-    
-    Source       : ods.typelem
-    Lignes       : 43
-    Colonnes ODS : 153
-    Colonnes PREP: 32  (+ _prep_loaded_at)
-    Exclues      : 122 (79.7%)
-    
-    Stratégie    : TABLE
-    Full Refresh: Oui
-    Merge        : N/A
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 0 répliqué(s)
-    
-    Exclusions:
-      - Techniques ETL  : 5
-      - 100% NULL       : 8
-      - Constantes      : 109
-      - Faible valeur   : 0
-    ============================================================================
+============================================================================
+PREP MODEL : typelem
+============================================================================
+Generated : 2025-12-15 16:44:02
+Source    : ods.typelem
+Rows ODS  : 43
+Cols ODS  : 153
+Cols PREP : 33 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
+    "ndos" AS ndos,
     "typ_fich" AS typ_fich,
     "typ_elem" AS typ_elem,
     "sous_type" AS sous_type,
@@ -62,3 +58,9 @@ SELECT
     "_etl_valid_from" AS _etl_source_timestamp,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'typelem') }}
+{% if is_incremental() %}
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
+{% endif %}

@@ -4,34 +4,24 @@
     incremental_strategy='merge',
     on_schema_change='sync_all_columns',
     post_hook=[
-        "DELETE FROM {{ this }} WHERE _etl_hashdiff NOT IN (SELECT _etl_hashdiff FROM {{ source('ods', 'focondi') }})"
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'focondi') }} s WHERE s._etl_hashdiff = t._etl_hashdiff){% endif %}",
+        "CREATE UNIQUE INDEX IF NOT EXISTS focondi_pkey ON {{ this }} USING btree (_etl_hashdiff)",
+        "CREATE INDEX IF NOT EXISTS idx_focondi_etl_source_timestamp ON {{ this }} USING btree (_etl_source_timestamp)",
+        "ANALYZE {{ this }}"
     ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : focondi
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:40:10
-    
-    Source       : ods.focondi
-    Lignes       : 103,298
-    Colonnes ODS : 122
-    Colonnes PREP: 75  (+ _prep_loaded_at)
-    Exclues      : 48 (39.3%)
-    
-    Stratégie    : INCREMENTAL
-    Unique Key  : _etl_hashdiff
-    Merge        : INSERT/UPDATE + DELETE orphans
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 0 répliqué(s)
-    
-    Exclusions:
-      - Techniques ETL  : 1
-      - 100% NULL       : 7
-      - Constantes      : 38
-      - Faible valeur   : 2
-    ============================================================================
+============================================================================
+PREP MODEL : focondi
+============================================================================
+Generated : 2025-12-15 16:41:15
+Source    : ods.focondi
+Rows ODS  : 103,671
+Cols ODS  : 122
+Cols PREP : 76 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -107,14 +97,14 @@ SELECT
     "qte_rq_8" AS qte_rq_8,
     "qte_rq_9" AS qte_rq_9,
     "qte_rq_10" AS qte_rq_10,
+    "_etl_hashdiff" AS _etl_hashdiff,
     "_etl_valid_from" AS _etl_source_timestamp,
     "_etl_run_id" AS _etl_run_id,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'focondi') }}
-
 {% if is_incremental() %}
-    WHERE "_etl_valid_from" > (
-        SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp) 
-        FROM {{ this }}
-    )
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
 {% endif %}

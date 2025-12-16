@@ -4,36 +4,24 @@
     incremental_strategy='merge',
     on_schema_change='sync_all_columns',
     post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'clcondi') }} s WHERE s.uniq_id = t.uniq_id){% endif %}",
         "CREATE UNIQUE INDEX IF NOT EXISTS clcondi_pkey ON {{ this }} USING btree (uniq_id)",
-        "ANALYZE {{ this }}",
-        "DELETE FROM {{ this }} WHERE uniq_id NOT IN (SELECT uniq_id FROM {{ source('ods', 'clcondi') }})"
+        "CREATE INDEX IF NOT EXISTS idx_clcondi_etl_source_timestamp ON {{ this }} USING btree (_etl_source_timestamp)",
+        "ANALYZE {{ this }}"
     ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : clcondi
-    ============================================================================
-    Généré automatiquement le 2025-12-12 16:40:45
-    
-    Source       : ods.clcondi
-    Lignes       : 429,971
-    Colonnes ODS : 161
-    Colonnes PREP: 65  (+ _prep_loaded_at)
-    Exclues      : 97 (60.2%)
-    
-    Stratégie    : INCREMENTAL
-    Unique Key  : uniq_id
-    Merge        : INSERT/UPDATE + DELETE orphans
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 2 répliqué(s) + ANALYZE
-    
-    Exclusions:
-      - Techniques ETL  : 1
-      - 100% NULL       : 31
-      - Constantes      : 63
-      - Faible valeur   : 2
-    ============================================================================
+============================================================================
+PREP MODEL : clcondi
+============================================================================
+Generated : 2025-12-15 16:41:17
+Source    : ods.clcondi
+Rows ODS  : 429,978
+Cols ODS  : 161
+Cols PREP : 64 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -76,7 +64,6 @@ SELECT
     "px_vte_8" AS px_vte_8,
     "px_vte_9" AS px_vte_9,
     "px_vte_10" AS px_vte_10,
-    "applic" AS applic,
     "px_poi" AS px_poi,
     "px_cli" AS px_cli,
     "depot" AS depot,
@@ -103,10 +90,9 @@ SELECT
     "_etl_run_id" AS _etl_run_id,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'clcondi') }}
-
 {% if is_incremental() %}
-    WHERE "_etl_valid_from" > (
-        SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp) 
-        FROM {{ this }}
-    )
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
 {% endif %}

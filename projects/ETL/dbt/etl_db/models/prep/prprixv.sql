@@ -1,31 +1,26 @@
 {{ config(
-    materialized='table',
+    materialized='incremental',
+    unique_key=['cod_pro', 'no_tarif'],
+    incremental_strategy='merge',
+    on_schema_change='sync_all_columns',
+    post_hook=[
+        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'prprixv') }} s WHERE s.cod_pro = t.cod_pro AND s.no_tarif = t.no_tarif){% endif %}",
+        "CREATE UNIQUE INDEX IF NOT EXISTS prprixv_pkey ON {{ this }} USING btree (cod_pro, no_tarif)",
+        "ANALYZE {{ this }}"
+    ]
 ) }}
 
 /*
-    ============================================================================
-    Modèle PREP : prprixv
-    ============================================================================
-    Généré automatiquement le 2025-12-12 17:03:47
-    
-    Source       : ods.prprixv
-    Lignes       : 5,013,186
-    Colonnes ODS : 121
-    Colonnes PREP: 48  (+ _prep_loaded_at)
-    Exclues      : 74 (61.2%)
-    
-    Stratégie    : TABLE
-    Full Refresh: Oui
-    Merge        : N/A
-    Incremental  : Enabled (_etl_valid_from)
-    Index        : 0 répliqué(s)
-    
-    Exclusions:
-      - Techniques ETL  : 5
-      - 100% NULL       : 11
-      - Constantes      : 58
-      - Faible valeur   : 0
-    ============================================================================
+============================================================================
+PREP MODEL : prprixv
+============================================================================
+Generated : 2025-12-15 16:44:14
+Source    : ods.prprixv
+Rows ODS  : 5,020,141
+Cols ODS  : 121
+Cols PREP : 43 (+ _prep_loaded_at)
+Strategy  : INCREMENTAL
+============================================================================
 */
 
 SELECT
@@ -33,8 +28,6 @@ SELECT
     "no_tarif" AS no_tarif,
     "px_refv" AS px_refv,
     "coef_t2" AS coef_t2,
-    "coef_t3" AS coef_t3,
-    "coef_t4" AS coef_t4,
     "fpx_refv" AS fpx_refv,
     "qte_1" AS qte_1,
     "qte_2" AS qte_2,
@@ -56,9 +49,6 @@ SELECT
     "px_vte_8" AS px_vte_8,
     "px_vte_9" AS px_vte_9,
     "px_vte_10" AS px_vte_10,
-    "coef_rq_1" AS coef_rq_1,
-    "coef_rq_2" AS coef_rq_2,
-    "coef_rq_3" AS coef_rq_3,
     "px_mini" AS px_mini,
     "dat_fpxv" AS dat_fpxv,
     "cod_cli" AS cod_cli,
@@ -78,3 +68,9 @@ SELECT
     "_etl_valid_from" AS _etl_source_timestamp,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'prprixv') }}
+{% if is_incremental() %}
+WHERE "_etl_valid_from" > (
+    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
+    FROM {{ this }}
+)
+{% endif %}
