@@ -13,9 +13,10 @@ import psycopg2
 from prefect import task
 from prefect.logging import get_run_logger
 import sys
+from pathlib import Path
 
-sys.path.append(r'E:\Prefect\projects\ETL')
-from flows.config.pg_config import config
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.config import config
 from flows.config.table_metadata import (
     get_primary_keys, 
     has_primary_key, 

@@ -21,9 +21,7 @@ class TeamsAlerter:
             message: str, 
             color: str = "0078D4",
             facts: Optional[Dict] = None) -> bool:
-        """
-        Envoyer notification Teams
-        """
+        """Envoyer notification Teams"""
         
         # Mapping couleurs
         colors = {
@@ -38,7 +36,7 @@ class TeamsAlerter:
         payload = {
             "title": title,
             "text": message,
-            "color": color_hex  # ← Changé de themeColor à color
+            "color": color_hex
         }
         
         # Ajouter faits comme texte formaté
@@ -71,7 +69,11 @@ class TeamsAlerter:
 
 # Test
 if __name__ == "__main__":
-    from config import TEAMS_WEBHOOK_URL
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    
+    from shared.config import TEAMS_WEBHOOK_URL
     
     alerter = TeamsAlerter(TEAMS_WEBHOOK_URL)
     

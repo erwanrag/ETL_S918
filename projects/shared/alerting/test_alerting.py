@@ -4,11 +4,10 @@ Test du système d'alerting
 import sys
 from pathlib import Path
 
-# Ajouter alerting au path
-alerting_dir = Path(__file__).parent
-sys.path.insert(0, str(alerting_dir))
+# Ajouter le projet au path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from alert_manager import get_alert_manager, AlertLevel
+from shared.alerting.alert_manager import get_alert_manager, AlertLevel
 
 print("🧪 Début des tests d'alerting...\n")
 

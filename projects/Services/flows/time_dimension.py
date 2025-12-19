@@ -11,10 +11,10 @@ import calendar
 import sys
 from pathlib import Path
 
-PROJECTS_PATH = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(PROJECTS_PATH))
+# Ajouter le projet au path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from Services.config.pg_config import config
+from shared.config import config
 
 # Helper functions
 def day_suffix(day: int) -> str:

@@ -84,7 +84,7 @@ def archive_and_cleanup(
     base_filename: str,
     archive_root: str,
     incoming_paths: Dict[str, Path],
-    sftp_server_paths: Dict[str, Path],
+    sftp_server_paths: Dict[str, Path],  # Peut être vide sur Linux
     logger=None
 ) -> Dict[str, int]:
     """
@@ -92,9 +92,9 @@ def archive_and_cleanup(
     
     Args:
         base_filename: Nom de base sans extension (ex: "client_20241201")
-        archive_root: Racine archives (ex: "E:/SFTP_Mirroring/Processed")
+        archive_root: Racine archives (ex: "/data/sftp_cbmdata01/Processed")
         incoming_paths: Dict des chemins Incoming {type: path}
-        sftp_server_paths: Dict des chemins SFTP serveur {type: path}
+        sftp_server_paths: Dict des chemins SFTP serveur {type: path} (vide sur Linux)
         logger: Logger Prefect (optionnel)
     
     Returns:
@@ -103,23 +103,6 @@ def archive_and_cleanup(
             'cleaned_count': int,
             'total_files': int
         }
-    
-    Exemple:
-        archive_and_cleanup(
-            base_filename="client_20241201",
-            archive_root="E:/SFTP_Mirroring/Processed",
-            incoming_paths={
-                'parquet': Path("E:/SFTP_Mirroring/Incoming/data/parquet/client.parquet"),
-                'metadata': Path("E:/SFTP_Mirroring/Incoming/data/metadata/client_metadata.json"),
-                'status': Path("E:/SFTP_Mirroring/Incoming/data/status/client_status.json")
-            },
-            sftp_server_paths={
-                'parquet': Path("C:/ProgramData/ssh/SFTPRoot/Incoming/data/parquet/client.parquet"),
-                'metadata': Path("C:/ProgramData/ssh/SFTPRoot/Incoming/data/metadata/client_metadata.json"),
-                'status': Path("C:/ProgramData/ssh/SFTPRoot/Incoming/data/status/client_status.json")
-            },
-            logger=get_run_logger()
-        )
     """
     today = datetime.now().strftime("%Y-%m-%d")
     archive_dir = Path(archive_root) / today / "data"
@@ -151,26 +134,26 @@ def archive_and_cleanup(
     # ========================================================================
     # ETAPE 2 : Nettoyer serveur SFTP
     # ========================================================================
-    
-    for file_type, sftp_path in sftp_server_paths.items():
-        sftp_file = Path(sftp_path)
-        if sftp_file.exists():
-            try:
-                os.remove(sftp_file)
-                if logger:
-                    logger.info(f"Supprime du serveur SFTP : {sftp_file.name}")
-                cleaned_count += 1
-                
-            except PermissionError:
-                if logger:
-                    logger.warning(f"Fichier verrouille sur serveur SFTP : {sftp_file.name}")
+    if sftp_server_paths:
+        for file_type, sftp_path in sftp_server_paths.items():
+            sftp_file = Path(sftp_path)
+            if sftp_file.exists():
+                try:
+                    os.remove(sftp_file)
+                    if logger:
+                        logger.info(f"Supprime du serveur SFTP : {sftp_file.name}")
+                    cleaned_count += 1
                     
-            except Exception as e:
+                except PermissionError:
+                    if logger:
+                        logger.warning(f"Fichier verrouille sur serveur SFTP : {sftp_file.name}")
+                        
+                except Exception as e:
+                    if logger:
+                        logger.warning(f"Impossible de supprimer {sftp_file.name} : {e}")
+            else:
                 if logger:
-                    logger.warning(f"Impossible de supprimer {sftp_file.name} : {e}")
-        else:
-            if logger:
-                logger.debug(f"Fichier deja absent du serveur SFTP : {sftp_file.name}")
+                    logger.debug(f"Fichier deja absent du serveur SFTP : {sftp_file.name}")
     
     # ========================================================================
     # RESUME

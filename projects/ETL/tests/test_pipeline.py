@@ -7,8 +7,8 @@ import psycopg2
 from pathlib import Path
 import sys
 
-sys.path.append(r'E:\Prefect\projects\ETL')
-from flows.config.pg_config import config
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.config import config, sftp_config
 
 
 def test_db_connection():
@@ -23,7 +23,7 @@ def test_db_connection():
 
 def test_sftp_directory_exists():
     """Test existence répertoire SFTP"""
-    sftp_path = Path(config.sftp_parquet_dir)
+    sftp_path = sftp_config.sftp_parquet_dir
     assert sftp_path.exists(), f"SFTP dir manquant : {sftp_path}"
 
 

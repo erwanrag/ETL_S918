@@ -17,8 +17,8 @@ import sys
 from pathlib import Path
 
 # Ajouter le chemin du projet
-sys.path.append(str(Path(__file__).parent.parent))
-from flows.config.pg_config import config
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.config import config, sftp_config
 from utils.metadata_helper import get_business_columns
 
 

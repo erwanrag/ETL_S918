@@ -21,8 +21,8 @@ import sys
 import psycopg2
 from datetime import datetime
 
-sys.path.append(r'E:\Prefect\projects\ETL')
-from flows.config.pg_config import config
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.config import config, sftp_config
 from flows.ingestion.sftp_to_raw import (
     read_metadata_json,
     read_status_json, 
@@ -63,7 +63,7 @@ def find_table_file(
     logger = get_run_logger()
     
     # Scanner répertoire parquet
-    parquet_dir = Path(config.sftp_parquet_dir)
+    parquet_dir = sftp_config.sftp_parquet_dir
     
     if not parquet_dir.exists():
         logger.error(f"[ERROR] Répertoire parquet introuvable : {parquet_dir}")

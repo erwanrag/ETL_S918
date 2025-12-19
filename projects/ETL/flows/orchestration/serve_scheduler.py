@@ -24,7 +24,7 @@ from prefect import serve, task
 from prefect.client.schemas.schedules import CronSchedule, IntervalSchedule
 
 from flows.orchestration.full_pipeline import full_etl_pipeline
-from flows.config.pg_config import config
+from shared.config import config, paths_config
 
 
 @task(name="🏥 Health Check")
@@ -49,7 +49,7 @@ def pipeline_health_check():
     
     # 3. Disk space (minimum 10 GB)
     try:
-        stats = shutil.disk_usage("E:\\")
+        stats = shutil.disk_usage(paths_config.etl_root or "/data/prefect")
         free_gb = stats.free / (1024**3)
         checks['disk_space'] = free_gb > 10
     except:

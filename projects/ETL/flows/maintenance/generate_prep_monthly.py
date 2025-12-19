@@ -2,11 +2,6 @@
 ============================================================================
 Flow Prefect : Génération Automatique Modèles PREP
 ============================================================================
-Responsabilité : Régénérer modèles dbt prep mensuellement
-- Appelle scripts/generators/generate_prep_models.py
-- Compile modèles dbt pour validation
-- Alerting intégré Teams/Email
-============================================================================
 """
 
 import subprocess
@@ -16,10 +11,9 @@ from datetime import datetime
 from prefect import flow, task
 from prefect.logging import get_run_logger
 
-sys.path.append(r'E:\Prefect\projects\ETL')
-from flows.config.pg_config import config
-
-# Import alerting
+# Imports config
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.config import config, paths_config
 from shared.alerting.alert_manager import get_alert_manager, AlertLevel
 
 
@@ -39,7 +33,7 @@ def generate_prep_models():
     """
     logger = get_run_logger()
     
-    script_path = Path(r"E:\Prefect\projects\ETL\scripts\generators\generate_prep_models.py")
+    script_path = Path(__file__).parent.parent.parent / "scripts" / "generators" / "generate_prep_models.py"
     
     if not script_path.exists():
         raise FileNotFoundError(f"Script introuvable : {script_path}")
@@ -52,7 +46,7 @@ def generate_prep_models():
             ["python", str(script_path)],
             capture_output=True,
             text=True,
-            cwd=r"E:\Prefect\projects\ETL",
+            cwd=str(Path(__file__).parent.parent.parent),
             timeout=600  # 10 min max
         )
         
@@ -133,7 +127,7 @@ def compile_dbt_prep():
     """
     logger = get_run_logger()
     
-    dbt_project_dir = Path(config.dbt_project_dir)
+    dbt_project_dir = paths_config.dbt_project_dir
     
     logger.info("[DBT] Compilation modèles prep...")
     

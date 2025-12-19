@@ -2,7 +2,7 @@
 ============================================================================
 Configuration Métadonnées Tables
 ============================================================================
-Fichier : E:/Prefect/projects/ETL/flows/config/table_metadata.py
+Fichier :/data/Prefect/projects/ETL/flows/config/table_metadata.py
 
 Lit dynamiquement les clés primaires depuis metadata.etl_tables
 ============================================================================
@@ -16,8 +16,10 @@ import logging
 # Configure logging
 logger = logging.getLogger(__name__)
 
-sys.path.append(r'E:\Prefect\projects\ETL')
-from flows.config.pg_config import config
+
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+from shared.config import config
 
 _TABLE_METADATA_CACHE: Dict[str, dict] = {}
 _CACHE_LOADED = False

@@ -333,6 +333,3 @@ python flows/time_dimension.py
 
 ---
 
-## 📄 License
-
-Propriété de CBM - Usage interne uniquement

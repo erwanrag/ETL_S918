@@ -87,8 +87,6 @@ def create_error_email_html(
 ) -> str:
     """Template HTML pour email d'erreur (ultra-compatible)"""
     
-    import socket
-    
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     hostname = socket.gethostname()
     
@@ -153,8 +151,6 @@ def create_success_email_html(
 ) -> str:
     """Template HTML pour email de succès"""
     
-    import socket
-    
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     hostname = socket.gethostname()
     
@@ -201,9 +197,14 @@ def create_success_email_html(
     
     return html
 
+
 # Test
 if __name__ == "__main__":
-    from config import EMAIL_CONFIG
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    
+    from shared.config import EMAIL_CONFIG
     
     alerter = EmailAlerter(EMAIL_CONFIG)
     
@@ -215,7 +216,6 @@ if __name__ == "__main__":
             "Environment": "Test"
         }
     )
-
 
     alerter.send(
         title="[TEST] Alerte Email S918_ETL",

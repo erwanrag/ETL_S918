@@ -18,11 +18,10 @@ from prefect.logging import get_run_logger
 import sys
 
 # Ajouter le chemin racine du projet
-sys.path.append(r'E:\Prefect\projects\ETL')
-from flows.config.pg_config import config
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+from shared.config import config, paths_config
 
 # Import alerting avec le bon chemin
-sys.path.insert(0, r'E:\Prefect\projects')
 from shared.alerting.alert_manager import get_alert_manager, AlertLevel
 
 
@@ -37,7 +36,7 @@ def run_dbt_models(models: str = "prep.*", full_refresh: bool = False):
     """
     logger = get_run_logger()
     
-    dbt_project_dir = Path(config.dbt_project_dir)
+    dbt_project_dir = paths_config.dbt_project_dir
     
     if not dbt_project_dir.exists():
         raise FileNotFoundError(f"Projet dbt introuvable : {dbt_project_dir}")

@@ -26,8 +26,8 @@ from typing import Dict, List, Tuple, Optional
 import sys
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent.parent))
-from flows.config.pg_config import config
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.config import config, sftp_config
 from utils.custom_types import build_column_definition
 from utils.metadata_helper import get_columns_metadata
 

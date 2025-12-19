@@ -10,11 +10,11 @@ import sys
 from pathlib import Path
 from datetime import date
 
-# Ajouter Services au path
-SERVICES_PATH = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(SERVICES_PATH))
+# Ajouter le projet au path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from config.pg_config import config
+from shared.config import config
+
 
 # =============================================================================
 # FIXTURES

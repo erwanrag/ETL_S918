@@ -26,13 +26,12 @@ load_dotenv()
 
 
 class DatabaseConfig:
-    """Configuration de la base de données"""
     def __init__(self):
-        self.host = os.getenv('POSTGRES_HOST', 'localhost')
-        self.port = int(os.getenv('POSTGRES_PORT', 5432))
-        self.database = os.getenv('POSTGRES_DATABASE', 'etl_db')
-        self.user = os.getenv('POSTGRES_USER', 'postgres')
-        self.password = os.getenv('DBT_POSTGRES_PASSWORD')
+        self.host = os.getenv('ETL_PG_HOST', 'localhost')
+        self.port = int(os.getenv('ETL_PG_PORT', 5432))
+        self.database = os.getenv('ETL_PG_DATABASE', 'etl_db')
+        self.user = os.getenv('ETL_PG_USER', 'postgres')
+        self.password = os.getenv('ETL_PG_PASSWORD')
         
     def get_connection_string(self) -> str:
         return f"host={self.host} port={self.port} dbname={self.database} user={self.user} password={self.password}"
@@ -515,7 +514,7 @@ def main():
     
     # Configuration
     config = DatabaseConfig()
-    dbt_project_dir = Path(os.getenv('ETL_DBT_PROJECT', 'E:/Prefect/projects/ETL/dbt/etl_db'))
+    dbt_project_dir = Path(os.getenv('ETL_DBT_PROJECT', '/data/prefect/projects/ETL/dbt/etl_db'))
     output_dir = dbt_project_dir / 'models' / 'prep'
     
     print(f"\n{'='*80}")

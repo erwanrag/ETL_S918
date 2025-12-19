@@ -1,6 +1,13 @@
 """
 Flow de maintenance pour nettoyer la base Prefect
 """
+
+import sys
+from pathlib import Path
+
+# Ajouter le projet au path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 from prefect import flow, task, get_run_logger
@@ -13,6 +20,8 @@ from prefect.client.schemas.filters import (
     DeploymentFilterId
 )
 from prefect.client.schemas.sorting import FlowRunSort
+
+
 
 # ---------------------------------------------------------------------------
 # TASKS

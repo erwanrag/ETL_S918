@@ -6,15 +6,16 @@ Responsabilité : Supprimer les anciennes entrées dans etl_logs.* et sftp_monit
                  pour éviter la croissance infinie des tables de logs
 ============================================================================
 """
-
+from pathlib import Path
 from datetime import datetime, timedelta
 from prefect import flow, task
 from prefect.logging import get_run_logger
 import psycopg2
 import sys
 
-sys.path.append(r'E:\Prefect\projects\ETL')
-from flows.config.pg_config import config
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.config import config
+
 
 
 @task(name="🧹 Nettoyer etl_logs")

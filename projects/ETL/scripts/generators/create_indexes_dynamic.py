@@ -4,14 +4,18 @@ Création dynamique index ODS
 
 import psycopg2
 import sys
-sys.path.append(r'E:\Prefect\projects\ETL')
-from flows.config.pg_config import config
+from pathlib import Path
+
+# Ajouter au path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from shared.config import config
 
 conn = psycopg2.connect(config.get_connection_string())
-conn.autocommit = True  # ← FIX: CONCURRENTLY nécessite autocommit
+conn.autocommit = True  # CONCURRENTLY nécessite autocommit
 cur = conn.cursor()
 
-# FIX: Bonne colonne = PrimaryKeyCols
+# Récupérer les tables avec PK
 cur.execute("""
     SELECT t."TableName", t."PrimaryKeyCols"
     FROM metadata.etl_tables t

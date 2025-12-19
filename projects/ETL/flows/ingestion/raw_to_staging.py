@@ -7,8 +7,8 @@ Flow Prefect : RAW → STAGING (OPTIMISe)
 
 import sys
 import os
-
-
+from pathlib import Path
+from datetime import datetime
 
 # Imports normaux
 from prefect import flow, task
@@ -17,11 +17,8 @@ from prefect.task_runners import ConcurrentTaskRunner
 from typing import Optional, List
 import psycopg2
 
-sys.path.append(r"E:\Prefect\projects\ETL")
-
-
-
-from flows.config.pg_config import config
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.config import config
 from tasks.staging_tasks import create_staging_table, load_raw_to_staging
 
 

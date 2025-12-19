@@ -14,14 +14,14 @@ from prefect import flow, task
 from prefect.logging import get_run_logger
 import sys
 
-sys.path.append(r'E:\Prefect\projects/ETL')
-from flows.config.pg_config import config
-from utils.file_operations import safe_move  
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.config import config, sftp_config
+from shared.utils.file_operations import safe_move
 
 @task(name="[OPEN] Scanner metadata Progress")
 def scan_db_metadata_directory():
     logger = get_run_logger()
-    metadata_dir = Path(config.sftp_db_metadata_dir)
+    metadata_dir = sftp_config.sftp_db_metadata_dir
     files_found = list(metadata_dir.glob('*.json'))
     logger.info(f"[DATA] {len(files_found)} fichier(s) metadata trouvé(s)")
     return [str(f) for f in files_found]
@@ -109,7 +109,7 @@ def archive_metadata_file(file_path: str):
     file_name = Path(file_path).name
     
     # ÉTAPE 1 : Archiver dans Processed
-    archive_dir = Path(config.sftp_processed_dir) / today / "db_metadata"
+    archive_dir = sftp_config.sftp_processed_dir / today / "db_metadata"
     archive_dir.mkdir(parents=True, exist_ok=True)
     dest_path = archive_dir / file_name
 
@@ -119,15 +119,6 @@ def archive_metadata_file(file_path: str):
         logger.warning(f"[WARN] Impossible d'archiver : {file_name}")
         return
     
-    # ÉTAPE 2 : Nettoyer serveur SFTP
-    sftp_file = Path(r"C:\ProgramData\ssh\SFTPRoot\Incoming\db_metadata") / file_name
-    
-    if sftp_file.exists():
-        try:
-            os.remove(sftp_file)
-            logger.info(f"🗑️ Supprimé du serveur SFTP : {file_name}")
-        except Exception as e:
-            logger.warning(f"[WARN] Impossible de supprimer du serveur SFTP : {e}")
 
 
 @flow(name="[AUX] 🗃️ Import Metadata Progress → PostgreSQL", log_prints=True)

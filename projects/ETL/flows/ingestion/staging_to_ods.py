@@ -12,14 +12,15 @@ Responsabilite : Merger les donnees staging vers ODS
 
 import sys
 import os
+from pathlib import Path
 
 from prefect import flow, task
 from prefect.logging import get_run_logger
 from typing import Optional, List
 import psycopg2
 
-sys.path.append(r'E:\Prefect\projects\ETL')
-from flows.config.pg_config import config
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.config import config
 from tasks.ods_tasks import merge_ods_auto, verify_ods_after_merge
 
 

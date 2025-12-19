@@ -1,3 +1,4 @@
+
 """
 ============================================================================
 Flow Prefect : Pipeline ETL Complet v6 (avec Services)
@@ -5,37 +6,40 @@ Flow Prefect : Pipeline ETL Complet v6 (avec Services)
 Ajout du flow Services (Currency Data) dans le pipeline principal
 """
 
-# ============================================================
-# FORCE UTF-8 ENCODING (Windows compatibility)
-# ============================================================
+
 import sys
 import os
 
+# ============================================================
+# SETUP PATHS & CONFIGURATION (CRITICAL ORDER)
+# ============================================================
+from pathlib import Path
 
+# 1. Ajouter la racine du projet au PYTHONPATH
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-# Maintenant les imports normaux
+# 2. Importer le module de configuration complet
+import shared.config as alerting_config
+
+# 3. INJECTION DANS SYS.MODULES (LE HACK)
+# Cela doit être fait AVANT d'importer alert_manager pour que
+# "from config import ..." fonctionne à l'intérieur de alert_manager
+sys.modules["config"] = alerting_config
+
+# 4. Maintenant on peut importer l'objet config spécifique pour ce script
+from shared.config import config
+
+# ============================================================
+# IMPORTS STANDARD & PREFECT
+# ============================================================
 from datetime import datetime
 from prefect import flow
 from prefect.logging import get_run_logger
-from pathlib import Path
 from typing import Optional, List, Union
 
-# ========================================
-# PATHS PROJET (racine = E:/Prefect/Projects)
-# ========================================
-
-# Racine du projet (3 parent folders depuis ce fichier)
-PROJECTS_PATH = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(PROJECTS_PATH))
-
-# Sous-dossiers utiles
-ETL_PATH = PROJECTS_PATH / "ETL"
-SERVICES_PATH = PROJECTS_PATH / "Services"
-ALERTING_PATH = PROJECTS_PATH / "shared" / "alerting"
-
-# ========================================
+# ============================================================
 # IMPORTS ETL
-# ========================================
+# ============================================================
 from ETL.flows.ingestion.db_metadata_import import db_metadata_import_flow
 from ETL.flows.ingestion.sftp_to_raw import sftp_to_raw_flow
 from ETL.flows.ingestion.raw_to_staging import raw_to_staging_flow_parallel
@@ -49,29 +53,18 @@ from ETL.flows.orchestration.parallel_helpers import (
     log_grouping_info
 )
 
-# ========================================
+# ============================================================
 # IMPORT SERVICES
-# ========================================
+# ============================================================
 from Services.flows.currency_rates import load_currency_data_flow
 
-# ========================================
-# IMPORT ALERTING + CONFIG FORCe
-# ========================================
-import importlib.util
-
-alerting_config_path = ALERTING_PATH / "config.py"
-spec = importlib.util.spec_from_file_location("alerting_config", alerting_config_path)
-alerting_config = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(alerting_config)
-
-# Injection dans sys.modules pour forcer alert_manager à utiliser notre config
-sys.modules["config"] = alerting_config
-
+# ============================================================
+# IMPORT ALERTING (Après le hack sys.modules)
+# ============================================================
 from shared.alerting.alert_manager import get_alert_manager, AlertLevel
 
-# Initialisation alert manager
+# Initialisation du gestionnaire d'alertes
 alert_mgr = get_alert_manager()
-
 
 
 @flow(name="[00] 🚀 Pipeline ETL Proginov", log_prints=True)

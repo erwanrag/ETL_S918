@@ -13,24 +13,15 @@ import sys
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-# Path handling
-PROJECTS_PATH = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(PROJECTS_PATH))
+# Ajouter le projet au path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Imports
-from Services.config.pg_config import config
+from shared.config import config
+from shared.alerting.alert_manager import get_alert_manager, AlertLevel
 
 # Alerting Setup
-ALERTING_PATH = PROJECTS_PATH / "shared" / "alerting"
-import importlib.util
-alerting_config_path = ALERTING_PATH / "config.py"
-spec = importlib.util.spec_from_file_location("alerting_config", alerting_config_path)
-alerting_config = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(alerting_config)
-sys.modules['config'] = alerting_config
-
 try:
-    from shared.alerting.alert_manager import get_alert_manager, AlertLevel
     alert_mgr = get_alert_manager()
     ALERTING_ENABLED = True
 except ImportError:
