@@ -15,11 +15,11 @@
 ============================================================================
 PREP MODEL : histoent
 ============================================================================
-Generated : 2025-12-15 16:44:42
+Generated : 2025-12-21 05:01:36
 Source    : ods.histoent
-Rows ODS  : 1,094,503
+Rows ODS  : 1,102,634
 Cols ODS  : 450
-Cols PREP : 221 (+ _prep_loaded_at)
+Cols PREP : 223 (+ _prep_loaded_at)
 Strategy  : INCREMENTAL
 ============================================================================
 */
@@ -103,6 +103,7 @@ SELECT
     "zta_4" AS zta_4,
     "zta_5" AS zta_5,
     "zda_1" AS zda_1,
+    "zda_2" AS zda_2,
     "zda_5" AS zda_5,
     "usr_crt" AS usr_crt,
     "dat_crt" AS dat_crt,
@@ -133,6 +134,7 @@ SELECT
     "bl_ori" AS bl_ori,
     "mt_fact" AS mt_fact,
     "dafaca_1" AS dafaca_1,
+    "dafaca_2" AS dafaca_2,
     "mtfaca_1" AS mtfaca_1,
     "mtfaca_2" AS mtfaca_2,
     "mtfaca_3" AS mtfaca_3,

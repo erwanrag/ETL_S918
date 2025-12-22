@@ -1,32 +1,23 @@
 {{ config(
-    materialized='incremental',
-    unique_key='uniq_id',
-    incremental_strategy='merge',
-    on_schema_change='sync_all_columns',
-    post_hook=[
-        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'soumission') }} s WHERE s.uniq_id = t.uniq_id){% endif %}",
-        "CREATE UNIQUE INDEX IF NOT EXISTS soumission_pkey ON {{ this }} USING btree (uniq_id)",
-        "ANALYZE {{ this }}"
-    ]
+    materialized='table',
 ) }}
 
 /*
 ============================================================================
 PREP MODEL : soumission
 ============================================================================
-Generated : 2025-12-15 16:43:55
+Generated : 2025-12-21 05:01:26
 Source    : ods.soumission
-Rows ODS  : 176,290
+Rows ODS  : 183,433
 Cols ODS  : 154
 Cols PREP : 30 (+ _prep_loaded_at)
-Strategy  : INCREMENTAL
+Strategy  : TABLE
 ============================================================================
 */
 
 SELECT
     "no_contrat" AS no_contrat,
     "lib_contrat" AS lib_contrat,
-    "vente" AS vente,
     "cod_tiers" AS cod_tiers,
     "dat_deb" AS dat_deb,
     "dat_fin" AS dat_fin,
@@ -46,6 +37,7 @@ SELECT
     "typ_con" AS typ_con,
     "qte_his" AS qte_his,
     "cat_tar" AS cat_tar,
+    "depot" AS depot,
     "no_lot" AS no_lot,
     "uniq_id" AS uniq_id,
     "dat_liv" AS dat_liv,
@@ -55,9 +47,3 @@ SELECT
     "_etl_valid_from" AS _etl_source_timestamp,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'soumission') }}
-{% if is_incremental() %}
-WHERE "_etl_valid_from" > (
-    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
-    FROM {{ this }}
-)
-{% endif %}

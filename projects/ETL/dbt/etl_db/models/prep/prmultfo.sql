@@ -1,25 +1,17 @@
 {{ config(
-    materialized='incremental',
-    unique_key=['cod_pro', 'cod_fou'],
-    incremental_strategy='merge',
-    on_schema_change='sync_all_columns',
-    post_hook=[
-        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'prmultfo') }} s WHERE s.cod_pro = t.cod_pro AND s.cod_fou = t.cod_fou){% endif %}",
-        "CREATE UNIQUE INDEX IF NOT EXISTS prmultfo_pkey ON {{ this }} USING btree (cod_pro, cod_fou)",
-        "ANALYZE {{ this }}"
-    ]
+    materialized='table',
 ) }}
 
 /*
 ============================================================================
 PREP MODEL : prmultfo
 ============================================================================
-Generated : 2025-12-15 16:42:01
+Generated : 2025-12-21 05:00:37
 Source    : ods.prmultfo
-Rows ODS  : 3,392
+Rows ODS  : 15,308
 Cols ODS  : 172
-Cols PREP : 47 (+ _prep_loaded_at)
-Strategy  : INCREMENTAL
+Cols PREP : 50 (+ _prep_loaded_at)
+Strategy  : TABLE
 ============================================================================
 */
 
@@ -31,10 +23,13 @@ SELECT
     "refext" AS refext,
     "devise" AS devise,
     "px_refa" AS px_refa,
+    "pxnet" AS pxnet,
     "fpx_refa" AS fpx_refa,
     "dat_fpxa" AS dat_fpxa,
     "uni_ach" AS uni_ach,
     "lib_unia" AS lib_unia,
+    "lib_cona" AS lib_cona,
+    "conv_sto" AS conv_sto,
     "rem_ach" AS rem_ach,
     "gencod-a" AS gencod_a,
     "typ_elem" AS typ_elem,
@@ -43,6 +38,7 @@ SELECT
     "principa" AS principa,
     "statut" AS statut,
     "conv_md" AS conv_md,
+    "conv_dec" AS conv_dec,
     "calc_uv" AS calc_uv,
     "zal_1" AS zal_1,
     "znu_1" AS znu_1,
@@ -62,7 +58,6 @@ SELECT
     "phone" AS phone,
     "px_max" AS px_max,
     "art_cs_u" AS art_cs_u,
-    "f_sf_tar" AS f_sf_tar,
     "f_s3_tar" AS f_s3_tar,
     "dat_import" AS dat_import,
     "qte_eco" AS qte_eco,
@@ -72,9 +67,3 @@ SELECT
     "_etl_valid_from" AS _etl_source_timestamp,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'prmultfo') }}
-{% if is_incremental() %}
-WHERE "_etl_valid_from" > (
-    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
-    FROM {{ this }}
-)
-{% endif %}

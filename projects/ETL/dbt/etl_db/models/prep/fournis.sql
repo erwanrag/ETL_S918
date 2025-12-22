@@ -15,9 +15,9 @@
 ============================================================================
 PREP MODEL : fournis
 ============================================================================
-Generated : 2025-12-15 16:41:17
+Generated : 2025-12-21 05:00:09
 Source    : ods.fournis
-Rows ODS  : 8,419
+Rows ODS  : 8,431
 Cols ODS  : 216
 Cols PREP : 91 (+ _prep_loaded_at)
 Strategy  : INCREMENTAL

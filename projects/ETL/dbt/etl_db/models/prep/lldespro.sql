@@ -15,9 +15,9 @@
 ============================================================================
 PREP MODEL : lldespro
 ============================================================================
-Generated : 2025-12-15 16:42:02
+Generated : 2025-12-21 05:00:35
 Source    : ods.lldespro
-Rows ODS  : 551,597
+Rows ODS  : 551,623
 Cols ODS  : 9
 Cols PREP : 7 (+ _prep_loaded_at)
 Strategy  : INCREMENTAL

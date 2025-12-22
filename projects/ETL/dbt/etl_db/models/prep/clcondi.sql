@@ -15,9 +15,9 @@
 ============================================================================
 PREP MODEL : clcondi
 ============================================================================
-Generated : 2025-12-15 16:41:17
+Generated : 2025-12-21 05:00:08
 Source    : ods.clcondi
-Rows ODS  : 429,978
+Rows ODS  : 430,003
 Cols ODS  : 161
 Cols PREP : 64 (+ _prep_loaded_at)
 Strategy  : INCREMENTAL

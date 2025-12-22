@@ -15,9 +15,9 @@
 ============================================================================
 PREP MODEL : focondi
 ============================================================================
-Generated : 2025-12-15 16:41:15
+Generated : 2025-12-21 05:00:09
 Source    : ods.focondi
-Rows ODS  : 103,671
+Rows ODS  : 103,999
 Cols ODS  : 122
 Cols PREP : 76 (+ _prep_loaded_at)
 Strategy  : INCREMENTAL

@@ -15,11 +15,11 @@
 ============================================================================
 PREP MODEL : produit
 ============================================================================
-Generated : 2025-12-15 16:43:46
+Generated : 2025-12-21 05:02:13
 Source    : ods.produit
-Rows ODS  : 436,225
+Rows ODS  : 436,327
 Cols ODS  : 613
-Cols PREP : 138 (+ _prep_loaded_at)
+Cols PREP : 136 (+ _prep_loaded_at)
 Strategy  : INCREMENTAL
 ============================================================================
 */
@@ -46,7 +46,6 @@ SELECT
     "zda_2" AS zda_2,
     "statut" AS statut,
     "groupe" AS groupe,
-    "clas_grp" AS clas_grp,
     "famille" AS famille,
     "clas_fam" AS clas_fam,
     "s_famille" AS s_famille,
@@ -75,9 +74,9 @@ SELECT
     "classe" AS classe,
     "coef_dep" AS coef_dep,
     "code_tva" AS code_tva,
+    "enc_db" AS enc_db,
     "rem_vte" AS rem_vte,
     "pmp" AS pmp,
-    "ctrl_qua" AS ctrl_qua,
     "cod_for" AS cod_for,
     "qte_for" AS qte_for,
     "cod_nom" AS cod_nom,
@@ -103,7 +102,6 @@ SELECT
     "sf_tar" AS sf_tar,
     "cod_par" AS cod_par,
     "px_poi" AS px_poi,
-    "rem_imp" AS rem_imp,
     "zlo_1" AS zlo_1,
     "zlo_2" AS zlo_2,
     "cod_cli" AS cod_cli,
@@ -111,7 +109,7 @@ SELECT
     "gar_fab" AS gar_fab,
     "qte_eco" AS qte_eco,
     "magasin" AS magasin,
-    "er_pon" AS er_pon,
+    "er_var_1" AS er_var_1,
     "s3_famille" AS s3_famille,
     "s4_famille" AS s4_famille,
     "qte_serm" AS qte_serm,
@@ -135,13 +133,12 @@ SELECT
     "ges_emp" AS ges_emp,
     "mini_vte" AS mini_vte,
     "mult_vte" AS mult_vte,
+    "crit_cli_df" AS crit_cli_df,
     "cod_nue" AS cod_nue,
     "nb_uv" AS nb_uv,
-    "nb_cv" AS nb_cv,
     "pp_uv" AS pp_uv,
     "pou_poid" AS pou_poid,
     "cod_prx" AS cod_prx,
-    "ges_smp" AS ges_smp,
     "px_std" AS px_std,
     "w_produit" AS w_produit,
     "phone" AS phone,
@@ -154,6 +151,7 @@ SELECT
     "nb_uv1" AS nb_uv1,
     "px_etud" AS px_etud,
     "non_uli" AS non_uli,
+    "tare_p_1" AS tare_p_1,
     "tare_p_2" AS tare_p_2,
     "pds_net_1" AS pds_net_1,
     "pds_net_2" AS pds_net_2,

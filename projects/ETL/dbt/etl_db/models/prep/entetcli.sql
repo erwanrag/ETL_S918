@@ -1,25 +1,17 @@
 {{ config(
-    materialized='incremental',
-    unique_key='uniq_id',
-    incremental_strategy='merge',
-    on_schema_change='sync_all_columns',
-    post_hook=[
-        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'entetcli') }} s WHERE s.uniq_id = t.uniq_id){% endif %}",
-        "CREATE UNIQUE INDEX IF NOT EXISTS entetcli_pkey ON {{ this }} USING btree (uniq_id)",
-        "ANALYZE {{ this }}"
-    ]
+    materialized='table',
 ) }}
 
 /*
 ============================================================================
 PREP MODEL : entetcli
 ============================================================================
-Generated : 2025-12-15 16:41:16
+Generated : 2025-12-21 05:00:10
 Source    : ods.entetcli
-Rows ODS  : 16,226
+Rows ODS  : 15,304
 Cols ODS  : 463
-Cols PREP : 209 (+ _prep_loaded_at)
-Strategy  : INCREMENTAL
+Cols PREP : 210 (+ _prep_loaded_at)
+Strategy  : TABLE
 ============================================================================
 */
 
@@ -47,6 +39,7 @@ SELECT
     "villef" AS villef,
     "paysf" AS paysf,
     "chif_bl" AS chif_bl,
+    "fra_app" AS fra_app,
     "proforma" AS proforma,
     "liasse" AS liasse,
     "num_tel" AS num_tel,
@@ -234,9 +227,3 @@ SELECT
     "_etl_valid_from" AS _etl_source_timestamp,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'entetcli') }}
-{% if is_incremental() %}
-WHERE "_etl_valid_from" > (
-    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
-    FROM {{ this }}
-)
-{% endif %}

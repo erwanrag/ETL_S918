@@ -15,9 +15,9 @@
 ============================================================================
 PREP MODEL : hisprixa
 ============================================================================
-Generated : 2025-12-15 16:41:19
+Generated : 2025-12-21 05:00:11
 Source    : ods.hisprixa
-Rows ODS  : 115,550
+Rows ODS  : 116,026
 Cols ODS  : 48
 Cols PREP : 41 (+ _prep_loaded_at)
 Strategy  : INCREMENTAL

@@ -1,25 +1,17 @@
 {{ config(
-    materialized='incremental',
-    unique_key=['cod_nmc', 'cod_pro', 'depot', 'ordre', 'type_nmc'],
-    incremental_strategy='merge',
-    on_schema_change='sync_all_columns',
-    post_hook=[
-        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'prnomenc') }} s WHERE s.cod_nmc = t.cod_nmc AND s.cod_pro = t.cod_pro AND s.depot = t.depot AND s.ordre = t.ordre AND s.type_nmc = t.type_nmc){% endif %}",
-        "CREATE UNIQUE INDEX IF NOT EXISTS prnomenc_pkey ON {{ this }} USING btree (cod_nmc, cod_pro, depot, ordre, type_nmc)",
-        "ANALYZE {{ this }}"
-    ]
+    materialized='table',
 ) }}
 
 /*
 ============================================================================
 PREP MODEL : prnomenc
 ============================================================================
-Generated : 2025-12-15 16:42:02
+Generated : 2025-12-21 05:00:36
 Source    : ods.prnomenc
-Rows ODS  : 18,944
+Rows ODS  : 18,964
 Cols ODS  : 137
 Cols PREP : 29 (+ _prep_loaded_at)
-Strategy  : INCREMENTAL
+Strategy  : TABLE
 ============================================================================
 */
 
@@ -54,9 +46,3 @@ SELECT
     "_etl_valid_from" AS _etl_source_timestamp,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'prnomenc') }}
-{% if is_incremental() %}
-WHERE "_etl_valid_from" > (
-    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
-    FROM {{ this }}
-)
-{% endif %}

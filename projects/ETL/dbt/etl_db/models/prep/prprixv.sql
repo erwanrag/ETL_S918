@@ -1,25 +1,17 @@
 {{ config(
-    materialized='incremental',
-    unique_key=['cod_pro', 'no_tarif'],
-    incremental_strategy='merge',
-    on_schema_change='sync_all_columns',
-    post_hook=[
-        "{% if is_incremental() %}DELETE FROM {{ this }} t WHERE NOT EXISTS (SELECT 1 FROM {{ source('ods', 'prprixv') }} s WHERE s.cod_pro = t.cod_pro AND s.no_tarif = t.no_tarif){% endif %}",
-        "CREATE UNIQUE INDEX IF NOT EXISTS prprixv_pkey ON {{ this }} USING btree (cod_pro, no_tarif)",
-        "ANALYZE {{ this }}"
-    ]
+    materialized='table',
 ) }}
 
 /*
 ============================================================================
 PREP MODEL : prprixv
 ============================================================================
-Generated : 2025-12-15 16:44:14
+Generated : 2025-12-21 05:02:01
 Source    : ods.prprixv
-Rows ODS  : 5,020,141
+Rows ODS  : 5,020,466
 Cols ODS  : 121
 Cols PREP : 43 (+ _prep_loaded_at)
-Strategy  : INCREMENTAL
+Strategy  : TABLE
 ============================================================================
 */
 
@@ -27,7 +19,7 @@ SELECT
     "cod_pro" AS cod_pro,
     "no_tarif" AS no_tarif,
     "px_refv" AS px_refv,
-    "coef_t2" AS coef_t2,
+    "coef_t3" AS coef_t3,
     "fpx_refv" AS fpx_refv,
     "qte_1" AS qte_1,
     "qte_2" AS qte_2,
@@ -68,9 +60,3 @@ SELECT
     "_etl_valid_from" AS _etl_source_timestamp,
     CURRENT_TIMESTAMP AS _prep_loaded_at
 FROM {{ source('ods', 'prprixv') }}
-{% if is_incremental() %}
-WHERE "_etl_valid_from" > (
-    SELECT COALESCE(MAX(_etl_source_timestamp), '1900-01-01'::timestamp)
-    FROM {{ this }}
-)
-{% endif %}

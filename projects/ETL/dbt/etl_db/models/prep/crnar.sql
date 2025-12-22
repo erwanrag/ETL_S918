@@ -15,9 +15,9 @@
 ============================================================================
 PREP MODEL : crnar
 ============================================================================
-Generated : 2025-12-15 16:41:07
+Generated : 2025-12-21 05:00:02
 Source    : ods.crnar
-Rows ODS  : 382,359
+Rows ODS  : 382,535
 Cols ODS  : 56
 Cols PREP : 23 (+ _prep_loaded_at)
 Strategy  : INCREMENTAL
@@ -38,8 +38,8 @@ SELECT
     "zda_3" AS zda_3,
     "px_vte" AS px_vte,
     "marque" AS marque,
-    "zlo_2" AS zlo_2,
     "texte" AS texte,
+    "pp_uv" AS pp_uv,
     "cod_pro" AS cod_pro,
     "poid_brut_1" AS poid_brut_1,
     "poid_brut_2" AS poid_brut_2,

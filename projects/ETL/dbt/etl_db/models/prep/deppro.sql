@@ -15,9 +15,9 @@
 ============================================================================
 PREP MODEL : deppro
 ============================================================================
-Generated : 2025-12-15 16:41:58
+Generated : 2025-12-21 05:00:28
 Source    : ods.deppro
-Rows ODS  : 2,804,831
+Rows ODS  : 2,806,244
 Cols ODS  : 101
 Cols PREP : 19 (+ _prep_loaded_at)
 Strategy  : INCREMENTAL

@@ -15,9 +15,9 @@
 ============================================================================
 PREP MODEL : client
 ============================================================================
-Generated : 2025-12-15 16:41:05
+Generated : 2025-12-21 05:00:03
 Source    : ods.client
-Rows ODS  : 15,410
+Rows ODS  : 15,417
 Cols ODS  : 316
 Cols PREP : 122 (+ _prep_loaded_at)
 Strategy  : INCREMENTAL

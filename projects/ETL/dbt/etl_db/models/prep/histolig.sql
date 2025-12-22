@@ -15,11 +15,11 @@
 ============================================================================
 PREP MODEL : histolig
 ============================================================================
-Generated : 2025-12-15 16:44:30
+Generated : 2025-12-21 05:01:19
 Source    : ods.histolig
-Rows ODS  : 1,891,197
+Rows ODS  : 1,902,832
 Cols ODS  : 442
-Cols PREP : 217 (+ _prep_loaded_at)
+Cols PREP : 216 (+ _prep_loaded_at)
 Strategy  : INCREMENTAL
 ============================================================================
 */
@@ -100,10 +100,9 @@ SELECT
     "maj_stk" AS maj_stk,
     "edt_nmc" AS edt_nmc,
     "conv_md" AS conv_md,
+    "conv_dec" AS conv_dec,
     "qte_cde" AS qte_cde,
     "n_surlig" AS n_surlig,
-    "heure" AS heure,
-    "longueur" AS longueur,
     "largeur" AS largeur,
     "hauteur" AS hauteur,
     "calc_uv" AS calc_uv,
@@ -134,6 +133,7 @@ SELECT
     "volume" AS volume,
     "zon_lib_1" AS zon_lib_1,
     "num_ave" AS num_ave,
+    "tx_com" AS tx_com,
     "no_of" AS no_of,
     "no_reafab" AS no_reafab,
     "no_reacons" AS no_reacons,
@@ -201,7 +201,6 @@ SELECT
     "consigne" AS consigne,
     "det_frais" AS det_frais,
     "gen_csg" AS gen_csg,
-    "lien_cona" AS lien_cona,
     "hr_mod" AS hr_mod,
     "no_tarif" AS no_tarif,
     "hr_crt" AS hr_crt,
