@@ -46,6 +46,7 @@ class TableMetadata:
         self.primary_key = None
         self.etl_columns = set()
         self.all_columns = []
+        self.note = None
         
         self._load_metadata()
     
@@ -99,7 +100,22 @@ class TableMetadata:
             
             if self.etl_columns:
                 print(f"  📊 ETL columns found: {', '.join(sorted(self.etl_columns))}")
-            
+            # 4. Récupérer la note descriptive depuis metadata.etl_tables (si existe)
+            try:
+                cur.execute("""
+                    SELECT "Notes"
+                    FROM metadata.etl_tables
+                    WHERE "DestinationTable" = %s
+                    LIMIT 1
+                """, (f"ods.{self.table_name}",))
+
+                row = cur.fetchone()
+                if row and row[0]:
+                    self.note = row[0]
+                    print(f"  📝 Note found: {self.note}")
+            except Exception:
+                # volontairement silencieux : la note est optionnelle
+                pass
         finally:
             cur.close()
             conn.close()
@@ -139,8 +155,12 @@ class IndexReplicator:
                 # Adapter l'index pour PREP
                 adapted_idx = idx_def.replace(f'ON ods.{table_name}', 'ON {{ this }}')
                 
-                # Remplacer _etl_valid_from par _etl_source_timestamp
-                adapted_idx = adapted_idx.replace('_etl_valid_from', '_etl_source_timestamp')
+                # Remplacer _etl_valid_from par _etl_source_timestamp (nom d'index)
+                adapted_idx = adapted_idx.replace('idx_' + table_name + '_etl_valid_from', 
+                                   'idx_' + table_name + '_etl_source_timestamp')
+                
+                # Remplacer aussi la colonne dans l'index
+                adapted_idx = adapted_idx.replace('(_etl_valid_from)', '(_etl_source_timestamp)')
                 
                 # Ajouter IF NOT EXISTS
                 if 'IF NOT EXISTS' not in adapted_idx:
@@ -159,7 +179,6 @@ class IndexReplicator:
         finally:
             cur.close()
             conn.close()
-
 
 class ColumnAnalyzer:
     """Analyse les colonnes pour déterminer leur utilité"""
@@ -354,6 +373,23 @@ def generate_prep_model(
     # Config dbt
     # ------------------------------------------------------------------
     config_lines = [f"    materialized='{materialization}',"]
+    # ------------------------------------------------------------------
+    # Dagster metadata (UI / grouping)
+    # ------------------------------------------------------------------
+    config_lines.extend([
+        "    meta = {",
+        "        'dagster': {",
+        "            'group': 'prep',",
+        f"            'domain': '{table_name}',",
+        "            'layer': 'prep'",
+        "        },"
+    ])
+
+    if metadata.note:
+        safe_note = metadata.note.replace("'", "''")
+        config_lines.append(f"        'description': '{safe_note}'")
+
+    config_lines.append("    }")
 
     if incremental_strategy:
         config_lines.extend([
@@ -430,25 +466,27 @@ WHERE "_etl_valid_from" > (
     # ------------------------------------------------------------------
     # SQL FINAL
     # ------------------------------------------------------------------
+    note_block = f"\nDescription : {metadata.note}" if metadata.note else ""
     sql = f"""{config_block}
 
-/*
-============================================================================
-PREP MODEL : {table_name}
-============================================================================
-Generated : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-Source    : ods.{table_name}
-Rows ODS  : {analysis['total_rows']:,}
-Cols ODS  : {analysis['total_columns']}
-Cols PREP : {analysis['kept_columns'] + 1} (+ _prep_loaded_at)
-Strategy  : {materialization.upper()}
-============================================================================
-*/
+    /*
+    ============================================================================
+    PREP MODEL : {table_name}
+    ============================================================================
+    Generated : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    Source    : ods.{table_name}{note_block}
+    Rows ODS  : {analysis['total_rows']:,}
+    Cols ODS  : {analysis['total_columns']}
+    Cols PREP : {analysis['kept_columns'] + 1} (+ _prep_loaded_at)
+    Strategy  : {materialization.upper()}
+    ============================================================================
+    */
 
-SELECT
-{select_block}
-FROM {{{{ source('ods', '{table_name}') }}}}{incremental_where}
-"""
+    SELECT
+    {select_block}
+    FROM {{{{ source('ods', '{table_name}') }}}}{incremental_where}
+    """
+
     return sql
 
 
