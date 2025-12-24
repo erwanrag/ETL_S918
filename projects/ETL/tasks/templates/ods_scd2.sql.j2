@@ -1,0 +1,232 @@
+{# 
+============================================================================
+Template dbt ODS - SCD2 Complet
+============================================================================
+#}
+
+{%- set pk_list = pk_columns | join(', ') -%}
+{%- set pk_list_quoted = pk_columns | map('regex_replace', '^(.*)$', '"\\1"') | join(', ') -%}
+
+-- dbt config (ne pas utiliser {{ }})
+-- config:
+--   materialized: incremental
+--   unique_key: [{{ pk_columns | map('tojson') | join(', ') }}]
+--   incremental_strategy: merge
+
+{{'{{' }}
+    config(
+        materialized='incremental',
+        unique_key={{ pk_columns }},
+        incremental_strategy='merge',
+        on_schema_change='fail',
+        schema='ods_dbt'
+    )
+{{ '}}' }}
+
+/*
+============================================================================
+ODS Model: {{ table_name }}
+============================================================================
+Description : {{ description }}
+Source      : staging_etl.stg_{{ table_name }}
+Strategy    : SCD2 (Slowly Changing Dimension Type 2)
+Primary Key : {{ pk_list }}
+Detect Del. : {{ 'Yes' if detect_deletes else 'No' }}
+Retention   : {{ retention_days }} days
+============================================================================
+*/
+
+WITH source_data AS (
+    SELECT
+        {%- for pk in pk_columns %}
+        "{{ pk }}",
+        {%- endfor %}
+        {%- for col in business_columns %}
+        "{{ col }}",
+        {%- endfor %}
+        "_etl_hashdiff",
+        "_etl_loaded_at"
+    FROM {{'{{' }} source('staging', 'stg_{{ table_name }}') {{ '}}' }}
+    
+    {{'{% if is_incremental() %}'}}
+    WHERE "_etl_loaded_at" > (
+        SELECT COALESCE(MAX("_etl_valid_from"), '1900-01-01'::TIMESTAMP) 
+        FROM {{'{{' }} this {{ '}}' }}
+    )
+    {{'{% endif %}'}}
+),
+
+{{'{% if is_incremental() %}'}}
+
+current_records AS (
+    SELECT
+        {%- for pk in pk_columns %}
+        "{{ pk }}",
+        {%- endfor %}
+        "_etl_hashdiff",
+        "_etl_valid_from",
+        "last_seen_date"
+    FROM {{'{{' }} this {{ '}}' }}
+    WHERE "_etl_is_current" = TRUE
+      AND "_etl_is_deleted" = FALSE
+),
+
+new_records AS (
+    SELECT stg.*
+    FROM source_data stg
+    LEFT JOIN current_records ods USING ({{ pk_list_quoted }})
+    WHERE ods."{{ pk_columns[0] }}" IS NULL
+),
+
+changed_records AS (
+    SELECT 
+        stg.*,
+        ods."_etl_valid_from" AS previous_valid_from
+    FROM source_data stg
+    INNER JOIN current_records ods USING ({{ pk_list_quoted }})
+    WHERE stg."_etl_hashdiff" != ods."_etl_hashdiff"
+),
+
+unchanged_records AS (
+    SELECT
+        {%- for pk in pk_columns %}
+        ods."{{ pk }}",
+        {%- endfor %}
+        stg."_etl_loaded_at" AS new_last_seen
+    FROM current_records ods
+    INNER JOIN source_data stg USING ({{ pk_list_quoted }})
+    WHERE stg."_etl_hashdiff" = ods."_etl_hashdiff"
+),
+
+{{'{% if' }} detect_deletes and var('load_mode', 'INCREMENTAL') == 'FULL' {{ '%}' }}
+deleted_records AS (
+    SELECT 
+        {%- for pk in pk_columns %}
+        ods."{{ pk }}"{% if not loop.last %},{% endif %}
+        {%- endfor %}
+    FROM current_records ods
+    LEFT JOIN source_data stg USING ({{ pk_list_quoted }})
+    WHERE stg."{{ pk_columns[0] }}" IS NULL
+),
+{{'{% endif %}'}}
+
+final AS (
+    
+    SELECT
+        ods.*,
+        cr."_etl_loaded_at" AS "_etl_valid_to",
+        FALSE AS "_etl_is_current",
+        ods."last_seen_date"
+    FROM {{'{{' }} this {{ '}}' }} ods
+    INNER JOIN changed_records cr USING ({{ pk_list_quoted }})
+    WHERE ods."_etl_valid_from" = cr.previous_valid_from
+      AND ods."_etl_is_current" = TRUE
+    
+    UNION ALL
+    
+    SELECT
+        {%- for pk in pk_columns %}
+        "{{ pk }}",
+        {%- endfor %}
+        {%- for col in business_columns %}
+        "{{ col }}",
+        {%- endfor %}
+        "_etl_hashdiff",
+        "_etl_loaded_at" AS "_etl_valid_from",
+        NULL::TIMESTAMP AS "_etl_valid_to",
+        TRUE AS "_etl_is_current",
+        FALSE AS "_etl_is_deleted",
+        "_etl_loaded_at" AS "last_seen_date"
+    FROM changed_records
+    
+    UNION ALL
+    
+    SELECT
+        {%- for pk in pk_columns %}
+        "{{ pk }}",
+        {%- endfor %}
+        {%- for col in business_columns %}
+        "{{ col }}",
+        {%- endfor %}
+        "_etl_hashdiff",
+        "_etl_loaded_at" AS "_etl_valid_from",
+        NULL::TIMESTAMP AS "_etl_valid_to",
+        TRUE AS "_etl_is_current",
+        FALSE AS "_etl_is_deleted",
+        "_etl_loaded_at" AS "last_seen_date"
+    FROM new_records
+    
+    UNION ALL
+    
+    SELECT
+        {%- for pk in pk_columns %}
+        ods."{{ pk }}",
+        {%- endfor %}
+        {%- for col in business_columns %}
+        ods."{{ col }}",
+        {%- endfor %}
+        ods."_etl_hashdiff",
+        ods."_etl_valid_from",
+        ods."_etl_valid_to",
+        ods."_etl_is_current",
+        ods."_etl_is_deleted",
+        ur."new_last_seen" AS "last_seen_date"
+    FROM {{'{{' }} this {{ '}}' }} ods
+    INNER JOIN unchanged_records ur USING ({{ pk_list_quoted }})
+    WHERE ods."_etl_is_current" = TRUE
+    
+    {{'{% if' }} detect_deletes and var('load_mode', 'INCREMENTAL') == 'FULL' {{ '%}' }}
+    UNION ALL
+    
+    SELECT
+        {%- for pk in pk_columns %}
+        ods."{{ pk }}",
+        {%- endfor %}
+        {%- for col in business_columns %}
+        ods."{{ col }}",
+        {%- endfor %}
+        ods."_etl_hashdiff",
+        ods."_etl_valid_from",
+        CURRENT_TIMESTAMP AS "_etl_valid_to",
+        FALSE AS "_etl_is_current",
+        TRUE AS "_etl_is_deleted",
+        ods."last_seen_date"
+    FROM {{'{{' }} this {{ '}}' }} ods
+    INNER JOIN deleted_records dr USING ({{ pk_list_quoted }})
+    WHERE ods."_etl_is_current" = TRUE
+    {{'{% endif %}'}}
+    
+    UNION ALL
+    
+    SELECT * 
+    FROM {{'{{' }} this {{ '}}' }}
+    WHERE "_etl_is_current" = FALSE
+)
+
+{{'{% else %}'}}
+
+final AS (
+    SELECT
+        {%- for pk in pk_columns %}
+        "{{ pk }}",
+        {%- endfor %}
+        {%- for col in business_columns %}
+        "{{ col }}",
+        {%- endfor %}
+        "_etl_hashdiff",
+        "_etl_loaded_at" AS "_etl_valid_from",
+        NULL::TIMESTAMP AS "_etl_valid_to",
+        TRUE AS "_etl_is_current",
+        FALSE AS "_etl_is_deleted",
+        "_etl_loaded_at" AS "last_seen_date"
+    FROM source_data
+)
+
+{{'{% endif %}'}}
+
+SELECT * FROM final
+
+{{'{% if is_incremental() %}'}}
+WHERE "_etl_valid_to" IS NULL 
+   OR "_etl_valid_to" >= CURRENT_DATE - INTERVAL '{{ retention_days }} days'
+{{'{% endif %}'}}

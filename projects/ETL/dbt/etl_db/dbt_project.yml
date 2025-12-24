@@ -4,6 +4,7 @@
 # name or the intended use of these models
 name: 'etl_db'
 version: '1.0.0'
+config-version: 2
 
 # This setting configures which "profile" dbt uses for this project.
 profile: 'etl_db'
@@ -30,10 +31,22 @@ clean-targets:         # directories to be removed by `dbt clean`
 # directory as views. These settings can be overridden in the individual model
 # files using the `{{ config(...) }}` macro.
 models:
-  etl_db: 
+  etl_db:
+    # ✅ NOUVEAU : Couche ODS
+    ods:
+      +materialized: incremental
+      +schema: ods_dbt
+      +on_schema_change: fail
+      +incremental_strategy: merge
+      +tags: ["ods", "scd2"]
+
     prep:
       +materialized: table
       
     analytics:
       +materialized: table
+
+# Variables globales
+vars:
+  load_mode: 'INCREMENTAL'  # FULL, INCREMENTAL, FULL_RESET
       

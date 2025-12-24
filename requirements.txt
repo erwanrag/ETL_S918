@@ -12,6 +12,7 @@ sqlalchemy>=2.0
 # DBT (Postgres)
 dbt-core>=1.7
 dbt-postgres>=1.7
+Template
 
 # Manipulation fichiers + parquet
 pandas

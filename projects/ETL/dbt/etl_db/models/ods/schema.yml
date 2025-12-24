@@ -1,0 +1,14 @@
+# Schema ODS - Tests SCD2
+
+version: 2
+
+models:
+  - name: ods_histolig
+    description: "ODS SCD2"
+    columns:
+      - name: _etl_is_current
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]
+

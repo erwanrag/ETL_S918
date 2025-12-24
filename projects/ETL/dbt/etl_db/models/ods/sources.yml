@@ -1,0 +1,11 @@
+# Sources STAGING - Généré automatiquement
+
+version: 2
+
+sources:
+  - name: staging
+    description: "Tables staging"
+    schema: staging_etl
+    
+    tables:
+      - name: stg_histolig
